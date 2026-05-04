@@ -86,17 +86,6 @@ def get_relacion(db: Session, nombre_raw: str) -> Relacion | None:
     return db.scalar(select(Relacion).where(Relacion.nombre == clave))
 
 
-def _validar_longitudes(nombre: str, apellidos: str, telefono: str) -> list[str]:
-    err: list[str] = []
-    if len(nombre) > 120:
-        err.append(f"nombre excede 120 caracteres ({len(nombre)})")
-    if len(apellidos) > 180:
-        err.append(f"apellidos exceden 180 caracteres ({len(apellidos)})")
-    if len(telefono) > 40:
-        err.append(f"telefono excede 40 caracteres ({len(telefono)})")
-    return err
-
-
 def importar_excel_contactos(
     db: Session,
     archivo: UploadFile,
@@ -104,8 +93,8 @@ def importar_excel_contactos(
     omitir_duplicados: bool = False,
 ) -> dict[str, Any]:
     """
-    Lee ``.xlsx``, normaliza, valida catálogos existentes (sin crear) e inserta filas válidas
-    en bloque con ``INSERT`` masivo.
+    Lee ``.xlsx``, **normaliza todas las filas** (sin BD), luego valida contra catálogos,
+    deduplica opcionalmente e inserta en bloque con ``bulk_insert_mappings``.
     """
     if not archivo.filename or not archivo.filename.lower().endswith(".xlsx"):
         raise HTTPException(
@@ -141,105 +130,62 @@ def importar_excel_contactos(
             detail=f"Faltan columnas obligatorias en el Excel: {sorted(faltan)}",
         )
 
+    filas_normalizadas = normalizer.normalizar_dataframe_import_contactos(df)
+    log.info("Import Excel: normalizadas %s filas (sin BD)", len(filas_normalizadas))
+
     detalle_errores: list[dict[str, Any]] = []
     mappings: list[dict[str, Any]] = []
     vistos_archivo: set[tuple[str, str, int]] = set()
 
-    for idx, row in df.iterrows():
-        fila = int(idx) + 2
-        errs: list[str] = []
+    for fn in filas_normalizadas:
+        fila = fn.fila_excel
+        errs: list[str] = list(fn.errores_normalizacion)
 
-        nombre = normalizer.trim(row.get("nombre"))
-        apellidos = normalizer.trim(row.get("apellidos"))
-        if not nombre:
-            errs.append("nombre obligatorio vacío")
-        if not apellidos:
-            errs.append("apellidos obligatorio vacío")
-
-        provincia_nom = normalizer.upper_catalogo(row.get("provincia"))
-        municipio_nom = normalizer.upper_catalogo(row.get("municipio"))
-        cargo_nom = normalizer.upper_catalogo(row.get("cargo"))
-        partido_nom = normalizer.upper_catalogo(row.get("partido"))
-        tipo_nom = normalizer.upper_catalogo(row.get("tipo"))
-        relacion_txt = normalizer.trim(row.get("relacion"))
-
-        if not provincia_nom:
-            errs.append("provincia vacía")
-        if not municipio_nom:
-            errs.append("municipio vacío")
-        if not cargo_nom:
-            errs.append("cargo vacío")
-        if not partido_nom:
-            errs.append("partido vacío")
-        if not tipo_nom:
-            errs.append("tipo vacío")
-        if not relacion_txt:
-            errs.append("relacion vacía")
-
-        mov, err_mov = normalizer.parse_moviliza_si_no(row.get("moviliza"))
-        if err_mov:
-            errs.append(err_mov)
-
-        u_err: str | None = None
-        p_err: str | None = None
-        ultimo, u_err = normalizer.parse_fecha_iso(row.get("ultimo_contacto"))
-        proximo, p_err = normalizer.parse_fecha_iso(row.get("proximo_contacto"))
-        if u_err:
-            errs.append(f"ultimo_contacto: {u_err}")
-        if p_err:
-            errs.append(f"proximo_contacto: {p_err}")
-
-        telefono = normalizer.null_a_vacio(row.get("telefono"))
-        afinidad = normalizer.lower_campo(row.get("afinidad")) or "neutro"
-        influencia = normalizer.lower_campo(row.get("influencia")) or "medio"
-        responsable_s = normalizer.null_a_vacio(row.get("responsable"))
-        responsable = responsable_s if responsable_s else None
-        prioridad = normalizer.lower_campo(row.get("prioridad")) or "media"
-        notas_s = normalizer.null_a_vacio(row.get("notas"))
-        notas = notas_s if notas_s else None
-        periodo = normalizer.periodo_a_str(row.get("periodo"))
-        if not periodo:
-            errs.append("periodo vacío")
-
-        provincia = get_provincia(db, provincia_nom) if provincia_nom else None
-        if provincia_nom and not provincia:
-            errs.append(f"provincia no existe: {provincia_nom}")
+        provincia = get_provincia(db, fn.provincia) if fn.provincia else None
+        if fn.provincia and not provincia:
+            errs.append(f"provincia no existe: {fn.provincia}")
 
         municipio = None
-        if provincia and municipio_nom:
-            municipio = get_municipio(db, municipio_nom, provincia.id)
+        if provincia and fn.municipio:
+            municipio = get_municipio(db, fn.municipio, provincia.id)
             if not municipio:
-                errs.append(f"municipio no existe: {municipio_nom}")
+                errs.append(f"municipio no existe: {fn.municipio}")
 
-        cargo = get_cargo(db, cargo_nom) if cargo_nom else None
-        if cargo_nom and not cargo:
-            errs.append(f"cargo no existe: {cargo_nom}")
+        cargo = get_cargo(db, fn.cargo) if fn.cargo else None
+        if fn.cargo and not cargo:
+            errs.append(f"cargo no existe: {fn.cargo}")
 
-        partido = get_partido(db, partido_nom) if partido_nom else None
-        if partido_nom and not partido:
-            errs.append(f"partido no existe: {partido_nom}")
+        partido = get_partido(db, fn.partido) if fn.partido else None
+        if fn.partido and not partido:
+            errs.append(f"partido no existe: {fn.partido}")
 
-        tipo = get_tipo(db, tipo_nom) if tipo_nom else None
-        if tipo_nom and not tipo:
-            errs.append(f"tipo no existe: {tipo_nom}")
+        tipo = get_tipo(db, fn.tipo) if fn.tipo else None
+        if fn.tipo and not tipo:
+            errs.append(f"tipo no existe: {fn.tipo}")
 
-        relacion = get_relacion(db, relacion_txt) if relacion_txt else None
-        if relacion_txt and not relacion:
-            errs.append(f"relacion no existe: {relacion_txt}")
-
-        errs.extend(_validar_longitudes(nombre, apellidos, telefono))
+        relacion = get_relacion(db, fn.relacion) if fn.relacion else None
+        if fn.relacion and not relacion:
+            errs.append(f"relacion no existe: {fn.relacion}")
 
         if errs:
             log.warning("Import Excel fila %s errores=%s", fila, errs)
             detalle_errores.append({"fila": fila, "errores": errs})
             continue
 
-        if not (provincia and municipio and cargo and partido and tipo and relacion and mov is not None):
-            log.error("Import Excel fila %s estado inconsistente tras validar", fila)
+        if not (
+            provincia
+            and municipio
+            and cargo
+            and partido
+            and tipo
+            and relacion
+            and fn.moviliza is not None
+        ):
+            log.error("Import Excel fila %s estado inconsistente tras validar catálogo", fila)
             detalle_errores.append({"fila": fila, "errores": ["error interno de validación"]})
             continue
 
-        clave_dup = (nombre, apellidos, municipio.id)
+        clave_dup = (fn.nombre, fn.apellidos, municipio.id)
         if clave_dup in vistos_archivo:
             detalle_errores.append(
                 {"fila": fila, "errores": ["duplicado en el mismo archivo (nombre+apellidos+municipio_id)"]}
@@ -247,12 +193,14 @@ def importar_excel_contactos(
             continue
         vistos_archivo.add(clave_dup)
 
-        tel_db = telefono if telefono else None
+        tel_db = fn.telefono if fn.telefono else None
+        responsable = fn.responsable if fn.responsable else None
+        notas = fn.notas if fn.notas else None
 
         mappings.append(
             {
-                "nombre": nombre,
-                "apellidos": apellidos,
+                "nombre": fn.nombre,
+                "apellidos": fn.apellidos,
                 "telefono": tel_db,
                 "municipio_id": municipio.id,
                 "provincia_id": provincia.id,
@@ -260,15 +208,15 @@ def importar_excel_contactos(
                 "partido_id": partido.id,
                 "tipo_id": tipo.id,
                 "relacion_id": relacion.id,
-                "afinidad": afinidad,
-                "influencia": influencia,
-                "moviliza": mov,
-                "ultimo_contacto": ultimo,
-                "proximo_contacto": proximo,
+                "afinidad": fn.afinidad,
+                "influencia": fn.influencia,
+                "moviliza": fn.moviliza,
+                "ultimo_contacto": fn.ultimo_contacto,
+                "proximo_contacto": fn.proximo_contacto,
                 "responsable": responsable,
-                "prioridad": prioridad,
+                "prioridad": fn.prioridad,
                 "notas": notas,
-                "periodo": periodo,
+                "periodo": fn.periodo,
             }
         )
 
