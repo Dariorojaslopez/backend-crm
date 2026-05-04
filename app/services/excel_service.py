@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.models import Cargo, Contacto, Municipio, Partido, Provincia, Relacion, Tipo
 from app.services import relacion_service
 from app.utils import normalizer
+from app.utils.normalizer import FilaImportNormalizada
 
 log = logging.getLogger(__name__)
 
@@ -180,6 +181,95 @@ def _candidatos_municipio_por_nombre(
     return list(seen.values())
 
 
+def resolver_parametros_catalogo_para_fila(
+    fn: FilaImportNormalizada,
+    *,
+    prov_map: dict[str, Provincia],
+    mun_map: dict[tuple[int, str], Municipio],
+    cargo_map: dict[str, Cargo],
+    partido_map: dict[str, Partido],
+    tipo_map: dict[str, Tipo],
+    rel_map: dict[str, Relacion],
+    prov_por_id: dict[int, Provincia],
+    mun_por_nombre_idx: dict[str, list[Municipio]],
+) -> tuple[
+    Provincia | None,
+    Municipio | None,
+    Cargo | None,
+    Partido | None,
+    Tipo | None,
+    Relacion | None,
+    list[str],
+]:
+    """
+    Misma lógica que el import Excel: resuelve provincia/municipio/cargo/partido/tipo/relación
+    contra los mapas cargados. Devuelve alertas en español (p. ej. cotejo previo sin insertar).
+    """
+    alertas: list[str] = []
+    provincia: Provincia | None = None
+    municipio: Municipio | None = None
+    candidatos_mun: list[Municipio] = []
+
+    if fn.municipio:
+        candidatos_mun = _candidatos_municipio_por_nombre(mun_por_nombre_idx, fn.municipio)
+        if len(candidatos_mun) == 1:
+            municipio = candidatos_mun[0]
+            provincia = prov_por_id.get(municipio.provincia_id)
+        elif len(candidatos_mun) > 1:
+            if fn.provincia:
+                prov_hint = _resolver_por_mapa(prov_map, fn.provincia)
+                if prov_hint is not None:
+                    for c in candidatos_mun:
+                        if c.provincia_id == prov_hint.id:
+                            municipio = c
+                            provincia = prov_por_id.get(c.provincia_id)
+                            break
+            if municipio is None:
+                log.warning(
+                    "Municipio ambiguo (catálogo): '%s' candidatos=%s",
+                    fn.municipio,
+                    [c.id for c in candidatos_mun],
+                )
+                alertas.append(
+                    f"Municipio «{fn.municipio}» ambiguo: {len(candidatos_mun)} coincidencias en catálogo; "
+                    "indique «provincia» para desempatar.",
+                )
+        else:
+            alertas.append(f"Municipio «{fn.municipio}» no encontrado en catálogo.")
+
+    if provincia is None and fn.provincia:
+        provincia = _resolver_por_mapa(prov_map, fn.provincia)
+        if provincia is None and str(fn.provincia).strip():
+            alertas.append(f"Provincia «{fn.provincia}» no encontrada en catálogo.")
+
+    if fn.provincia and str(fn.provincia).strip() and municipio is not None and provincia is not None:
+        prov_por_texto = _resolver_por_mapa(prov_map, fn.provincia)
+        if prov_por_texto is not None and prov_por_texto.id != municipio.provincia_id:
+            pn_mun = prov_por_id.get(municipio.provincia_id)
+            alertas.append(
+                f"La provincia indicada «{fn.provincia}» no coincide con la del municipio resuelto "
+                f"({pn_mun.nombre if pn_mun else municipio.provincia_id}).",
+            )
+
+    cargo = _resolver_por_mapa(cargo_map, fn.cargo) if fn.cargo else None
+    if fn.cargo and str(fn.cargo).strip() and cargo is None:
+        alertas.append(f"Cargo «{fn.cargo}» no encontrado en catálogo.")
+
+    partido = _resolver_por_mapa(partido_map, fn.partido) if fn.partido else None
+    if fn.partido and str(fn.partido).strip() and partido is None:
+        alertas.append(f"Partido «{fn.partido}» no encontrado en catálogo.")
+
+    tipo = _resolver_por_mapa(tipo_map, fn.tipo) if fn.tipo else None
+    if fn.tipo and str(fn.tipo).strip() and tipo is None:
+        alertas.append(f"Tipo «{fn.tipo}» no encontrado en catálogo.")
+
+    relacion = _resolver_relacion(rel_map, fn.relacion) if fn.relacion else None
+    if fn.relacion and str(fn.relacion).strip() and relacion is None:
+        alertas.append(f"Relación «{fn.relacion}» no encontrada en catálogo.")
+
+    return provincia, municipio, cargo, partido, tipo, relacion, alertas
+
+
 # Columnas reconocidas por el import (si faltan en el Excel se añaden vacías). Ninguna es obligatoria.
 COLUMNAS_IMPORT_CONTACTO: tuple[str, ...] = (
     "nombre",
@@ -262,41 +352,17 @@ def importar_excel_contactos(
     mappings: list[dict[str, Any]] = []
 
     for fn in filas_normalizadas:
-        provincia: Provincia | None = None
-        municipio: Municipio | None = None
-
-        # Regla principal: resolver por municipio (más confiable en el Excel de carga).
-        # Si encuentra municipio, la provincia se infiere desde el catálogo.
-        if fn.municipio:
-            candidatos = _candidatos_municipio_por_nombre(mun_por_nombre_idx, fn.municipio)
-            if len(candidatos) == 1:
-                municipio = candidatos[0]
-                provincia = prov_por_id.get(municipio.provincia_id)
-            elif len(candidatos) > 1:
-                # Desempate opcional por provincia solo cuando haya homónimos.
-                if fn.provincia:
-                    prov_hint = _resolver_por_mapa(prov_map, fn.provincia)
-                    if prov_hint is not None:
-                        for c in candidatos:
-                            if c.provincia_id == prov_hint.id:
-                                municipio = c
-                                provincia = prov_por_id.get(c.provincia_id)
-                                break
-                if municipio is None:
-                    log.warning(
-                        "Municipio ambiguo en import (no se pudo resolver): '%s' candidatos=%s",
-                        fn.municipio,
-                        [c.id for c in candidatos],
-                    )
-
-        # Fallback: si no vino municipio o no se resolvió, intenta provincia por su cuenta.
-        if provincia is None and fn.provincia:
-            provincia = _resolver_por_mapa(prov_map, fn.provincia)
-
-        cargo = _resolver_por_mapa(cargo_map, fn.cargo) if fn.cargo else None
-        partido = _resolver_por_mapa(partido_map, fn.partido) if fn.partido else None
-        tipo = _resolver_por_mapa(tipo_map, fn.tipo) if fn.tipo else None
-        relacion = _resolver_relacion(rel_map, fn.relacion) if fn.relacion else None
+        provincia, municipio, cargo, partido, tipo, relacion, _alertas_import = resolver_parametros_catalogo_para_fila(
+            fn,
+            prov_map=prov_map,
+            mun_map=mun_map,
+            cargo_map=cargo_map,
+            partido_map=partido_map,
+            tipo_map=tipo_map,
+            rel_map=rel_map,
+            prov_por_id=prov_por_id,
+            mun_por_nombre_idx=mun_por_nombre_idx,
+        )
 
         tel_db = fn.telefono or None
         responsable = fn.responsable or None

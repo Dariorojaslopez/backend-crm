@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Tipo
 from app.schemas.contacto import ContactoCreate, ContactoResponse, ContactoUpdate
+from app.schemas.contacto_cotejo import ContactoCotejarRequest, ContactoCotejarResponse
 from app.schemas.pagination import PaginatedResponse
-from app.services import contacto_service
+from app.services import contacto_cotejo_service, contacto_service
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +23,24 @@ router = APIRouter()
 def crear_contacto(payload: ContactoCreate, db: Session = Depends(get_db)) -> ContactoResponse:
     log.info("POST contacto nombre=%s", payload.nombre)
     return contacto_service.crear_contacto(db, payload)
+
+
+@router.post(
+    "/cotejar-carga",
+    response_model=ContactoCotejarResponse,
+    summary="Cotejar datos contra catálogos (sin guardar)",
+    description=(
+        "Recibe filas con textos de provincia, municipio, cargo, partido, tipo y/o relación "
+        "(como en la plantilla Excel) y opcionalmente IDs. Devuelve los IDs y nombres que aplicaría "
+        "el import, más alertas si algo no existe, es ambiguo o no coincide entre texto e ID."
+    ),
+)
+def cotejar_carga_contactos(
+    payload: ContactoCotejarRequest,
+    db: Session = Depends(get_db),
+) -> ContactoCotejarResponse:
+    log.info("POST /contactos/cotejar-carga filas=%s", len(payload.filas))
+    return contacto_cotejo_service.cotejar_carga_contactos(db, payload.filas)
 
 
 @router.get(
