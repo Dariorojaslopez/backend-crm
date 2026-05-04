@@ -6,21 +6,21 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ContactoCreate(BaseModel):
-    """Payload para crear un contacto (validación de entrada)."""
+    """Payload para crear un contacto; todos los campos son opcionales."""
 
-    nombre: str = Field(..., max_length=120)
-    apellidos: str = Field(..., max_length=180)
+    nombre: str | None = Field(None, max_length=120)
+    apellidos: str | None = Field(None, max_length=180)
     telefono: str | None = Field(None, max_length=40)
 
-    municipio_id: int = Field(..., ge=1)
-    provincia_id: int = Field(..., ge=1)
-    cargo_id: int = Field(..., ge=1)
-    partido_id: int = Field(..., ge=1)
-    tipo_id: int = Field(..., ge=1)
-    relacion_id: int = Field(..., ge=1)
+    municipio_id: int | None = None
+    provincia_id: int | None = None
+    cargo_id: int | None = None
+    partido_id: int | None = None
+    tipo_id: int | None = None
+    relacion_id: int | None = None
 
-    afinidad: str = Field(..., description="aliado | neutro | opositor")
-    influencia: str = Field(..., description="alto | medio | bajo")
+    afinidad: str | None = Field(None, description="aliado | neutro | opositor")
+    influencia: str | None = Field(None, description="alto | medio | bajo")
 
     moviliza: bool = False
 
@@ -28,9 +28,9 @@ class ContactoCreate(BaseModel):
     proximo_contacto: date | None = None
 
     responsable: str | None = Field(None, max_length=200)
-    prioridad: str = Field(..., description="alta | media | baja")
+    prioridad: str | None = Field(None, description="alta | media | baja")
     notas: str | None = None
-    periodo: str = Field(..., max_length=64)
+    periodo: str | None = Field(None, max_length=64)
 
 
 class ContactoUpdate(BaseModel):
@@ -40,12 +40,12 @@ class ContactoUpdate(BaseModel):
     apellidos: str | None = Field(None, max_length=180)
     telefono: str | None = Field(None, max_length=40)
 
-    municipio_id: int | None = Field(None, ge=1)
-    provincia_id: int | None = Field(None, ge=1)
-    cargo_id: int | None = Field(None, ge=1)
-    partido_id: int | None = Field(None, ge=1)
-    tipo_id: int | None = Field(None, ge=1)
-    relacion_id: int | None = Field(None, ge=1)
+    municipio_id: int | None = None
+    provincia_id: int | None = None
+    cargo_id: int | None = None
+    partido_id: int | None = None
+    tipo_id: int | None = None
+    relacion_id: int | None = None
 
     afinidad: str | None = None
     influencia: str | None = None
@@ -67,16 +67,16 @@ class ContactoResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    nombre: str
-    apellidos: str
+    nombre: str | None
+    apellidos: str | None
     telefono: str | None
 
-    municipio_id: int
-    provincia_id: int
-    cargo_id: int
-    partido_id: int
-    tipo_id: int
-    relacion_id: int
+    municipio_id: int | None
+    provincia_id: int | None
+    cargo_id: int | None
+    partido_id: int | None
+    tipo_id: int | None
+    relacion_id: int | None
 
     municipio_nombre: str | None = None
     provincia_nombre: str | None = None
@@ -85,8 +85,8 @@ class ContactoResponse(BaseModel):
     tipo_nombre: str | None = None
     relacion_nombre: str | None = None
 
-    afinidad: str
-    influencia: str
+    afinidad: str | None
+    influencia: str | None
 
     moviliza: bool
 
@@ -94,8 +94,8 @@ class ContactoResponse(BaseModel):
     proximo_contacto: date | None
 
     responsable: str | None
-    prioridad: str
+    prioridad: str | None
     notas: str | None
 
-    periodo: str
+    periodo: str | None
     created_at: datetime

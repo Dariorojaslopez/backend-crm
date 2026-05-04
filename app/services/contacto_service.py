@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import Cargo, Contacto, Municipio, Partido, Relacion, Tipo
+from app.models import Cargo, Contacto, Municipio, Partido, Provincia, Relacion, Tipo
 from app.schemas.contacto import ContactoCreate, ContactoResponse, ContactoUpdate
 from app.schemas.pagination import PaginatedResponse
 
@@ -33,29 +33,10 @@ def _normalizar_texto_corto(val: str | None) -> str | None:
     return s.lower() if s else None
 
 
-def _validar_coherencia_geografica(db: Session, municipio_id: int, provincia_id: int) -> None:
-    m = db.get(Municipio, municipio_id)
-    if not m:
-        raise HTTPException(status_code=404, detail="Municipio no encontrado")
-    if m.provincia_id != provincia_id:
-        raise HTTPException(
-            status_code=400,
-            detail="El municipio no pertenece a la provincia indicada",
-        )
-
-
-def _validar_relacion_id(db: Session, relacion_id: int) -> None:
-    if not db.get(Relacion, relacion_id):
-        raise HTTPException(status_code=400, detail="relacion_id no existe")
-
-
-def _validar_fks_catalogo(db: Session, *, cargo_id: int, partido_id: int, tipo_id: int) -> None:
-    if not db.get(Cargo, cargo_id):
-        raise HTTPException(status_code=404, detail="Cargo no encontrado")
-    if not db.get(Partido, partido_id):
-        raise HTTPException(status_code=404, detail="Partido no encontrado")
-    if not db.get(Tipo, tipo_id):
-        raise HTTPException(status_code=404, detail="Tipo no encontrado")
+def _fk_valido(db: Session, model: type, id_: int | None) -> int | None:
+    if id_ is None:
+        return None
+    return id_ if db.get(model, id_) else None
 
 
 def serialize_contacto(c: Contacto) -> ContactoResponse:
@@ -90,33 +71,49 @@ def serialize_contacto(c: Contacto) -> ContactoResponse:
 
 
 def crear_contacto(db: Session, data: ContactoCreate) -> ContactoResponse:
-    _validar_coherencia_geografica(db, data.municipio_id, data.provincia_id)
-    _validar_fks_catalogo(
-        db,
-        cargo_id=data.cargo_id,
-        partido_id=data.partido_id,
-        tipo_id=data.tipo_id,
-    )
-    _validar_relacion_id(db, data.relacion_id)
+    mun_id = _fk_valido(db, Municipio, data.municipio_id)
+    prov_id = _fk_valido(db, Provincia, data.provincia_id)
+    if mun_id is not None:
+        m = db.get(Municipio, mun_id)
+        if m:
+            prov_id = m.provincia_id
+        else:
+            mun_id = None
+
+    cargo_id = _fk_valido(db, Cargo, data.cargo_id)
+    partido_id = _fk_valido(db, Partido, data.partido_id)
+    tipo_id = _fk_valido(db, Tipo, data.tipo_id)
+    relacion_id = _fk_valido(db, Relacion, data.relacion_id)
+
+    nombre = data.nombre.strip() if data.nombre else None
+    apellidos = data.apellidos.strip() if data.apellidos else None
+    afinidad = _normalizar_texto_corto(data.afinidad) if data.afinidad else None
+    influencia = _normalizar_texto_corto(data.influencia) if data.influencia else None
+    if data.prioridad:
+        prioridad = _normalizar_texto_corto(data.prioridad) or data.prioridad.strip().lower()
+    else:
+        prioridad = None
+    periodo = data.periodo.strip() if data.periodo else None
+
     c = Contacto(
-        nombre=data.nombre.strip(),
-        apellidos=data.apellidos.strip(),
+        nombre=nombre,
+        apellidos=apellidos,
         telefono=data.telefono.strip() if data.telefono else None,
-        municipio_id=data.municipio_id,
-        provincia_id=data.provincia_id,
-        cargo_id=data.cargo_id,
-        partido_id=data.partido_id,
-        tipo_id=data.tipo_id,
-        relacion_id=data.relacion_id,
-        afinidad=_normalizar_texto_corto(data.afinidad) or "",
-        influencia=_normalizar_texto_corto(data.influencia) or "",
+        municipio_id=mun_id,
+        provincia_id=prov_id,
+        cargo_id=cargo_id,
+        partido_id=partido_id,
+        tipo_id=tipo_id,
+        relacion_id=relacion_id,
+        afinidad=afinidad,
+        influencia=influencia,
         moviliza=data.moviliza,
         ultimo_contacto=data.ultimo_contacto,
         proximo_contacto=data.proximo_contacto,
         responsable=data.responsable.strip() if data.responsable else None,
-        prioridad=_normalizar_texto_corto(data.prioridad) or data.prioridad.strip().lower(),
+        prioridad=prioridad,
         notas=data.notas.strip() if data.notas else None,
-        periodo=data.periodo.strip(),
+        periodo=periodo,
     )
     db.add(c)
     db.flush()
@@ -294,32 +291,50 @@ def actualizar_contacto(db: Session, contacto_id: int, data: ContactoUpdate) -> 
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
 
     payload = data.model_dump(exclude_unset=True)
-    municipio_id = int(payload.get("municipio_id", c.municipio_id))
-    provincia_id = int(payload.get("provincia_id", c.provincia_id))
-    if "municipio_id" in payload or "provincia_id" in payload:
-        _validar_coherencia_geografica(db, municipio_id, provincia_id)
-
-    cargo_id = int(payload.get("cargo_id", c.cargo_id))
-    partido_id = int(payload.get("partido_id", c.partido_id))
-    tipo_id = int(payload.get("tipo_id", c.tipo_id))
-    if "cargo_id" in payload or "partido_id" in payload or "tipo_id" in payload:
-        _validar_fks_catalogo(db, cargo_id=cargo_id, partido_id=partido_id, tipo_id=tipo_id)
-
-    if "relacion_id" in payload and payload["relacion_id"] is not None:
-        _validar_relacion_id(db, int(payload["relacion_id"]))
 
     for campo, valor in payload.items():
         if campo in {"afinidad", "influencia", "prioridad"} and isinstance(valor, str):
-            valor = valor.strip().lower()
+            valor = valor.strip().lower() or None
         if campo in {"nombre", "apellidos", "periodo"} and isinstance(valor, str):
-            valor = valor.strip()
+            valor = valor.strip() or None
         if campo == "telefono" and isinstance(valor, str):
             valor = valor.strip() or None
         if campo == "notas" and isinstance(valor, str):
             valor = valor.strip() or None
         if campo == "responsable" and isinstance(valor, str):
             valor = valor.strip() or None
+        if campo in {"municipio_id", "provincia_id", "cargo_id", "partido_id", "tipo_id", "relacion_id"}:
+            modelo = {
+                "municipio_id": Municipio,
+                "provincia_id": Provincia,
+                "cargo_id": Cargo,
+                "partido_id": Partido,
+                "tipo_id": Tipo,
+                "relacion_id": Relacion,
+            }[campo]
+            if valor is not None and not db.get(modelo, int(valor)):
+                valor = None
         setattr(c, campo, valor)
+
+    if c.municipio_id is not None:
+        m = db.get(Municipio, c.municipio_id)
+        if m:
+            c.provincia_id = m.provincia_id
+        else:
+            c.municipio_id = None
+
+    if c.provincia_id is not None and not db.get(Provincia, c.provincia_id):
+        c.provincia_id = None
+
+    for fk_attr, modelo in (
+        ("cargo_id", Cargo),
+        ("partido_id", Partido),
+        ("tipo_id", Tipo),
+        ("relacion_id", Relacion),
+    ):
+        vid = getattr(c, fk_attr)
+        if vid is not None and not db.get(modelo, vid):
+            setattr(c, fk_attr, None)
 
     db.flush()
     cargado = obtener_contacto(db, contacto_id)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
@@ -42,48 +42,38 @@ def lower_campo(val: Any) -> str:
     return s.lower() if s else ""
 
 
-def parse_moviliza_si_no(val: Any) -> tuple[bool | None, str | None]:
-    """
-    Solo acepta SI / NO (tras trim y mayúsculas).
-    Retorna (bool, None) si OK, o (None, mensaje_error).
-    """
+def parse_moviliza_opcional(val: Any) -> bool:
+    """SI → True, NO → False; vacío u otro valor → False (sin error)."""
     s = trim(val).upper()
-    if s == "":
-        return None, "moviliza vacío (use SI o NO)"
     if s == "SI":
-        return True, None
-    if s == "NO":
-        return False, None
-    return None, f"moviliza inválido: {s!r} (solo SI o NO)"
+        return True
+    return False
 
 
-def parse_fecha_iso(val: Any) -> tuple[date | None, str | None]:
-    """
-    Fecha obligatoria en formato ``YYYY-MM-DD`` si hay valor.
-    Celda vacía / null → (None, None) sin error.
-    """
+def parse_fecha_opcional(val: Any) -> date | None:
+    """Intenta obtener fecha; si no es válida o está vacío → ``None`` (sin error)."""
     if pd.isna(val) or val is None:
-        return None, None
+        return None
     if isinstance(val, datetime):
-        return val.date(), None
+        return val.date()
     if isinstance(val, date):
-        return val, None
+        return val
     s = trim(val)
     if s == "":
-        return None, None
+        return None
     if len(s) == 10 and s[4] == "-" and s[7] == "-":
         try:
             y, mo, d = int(s[0:4]), int(s[5:7]), int(s[8:10])
             out = date(y, mo, d)
             if out.strftime("%Y-%m-%d") != s:
-                return None, f"fecha inválida: {s!r}"
-            return out, None
+                return None
+            return out
         except ValueError:
-            return None, f"fecha inválida (use YYYY-MM-DD): {s!r}"
+            return None
     ts = pd.to_datetime(val, errors="coerce")
     if not pd.isna(ts):
-        return ts.date(), None
-    return None, f"fecha inválida (use YYYY-MM-DD): {s!r}"
+        return ts.date()
+    return None
 
 
 def periodo_a_str(val: Any) -> str:
@@ -97,25 +87,22 @@ def periodo_a_str(val: Any) -> str:
 
 def afinidad_normalizada(val: Any) -> str:
     s = lower_campo(val)
-    return s if s else "neutro"
+    return s if s else ""
 
 
 def influencia_normalizada(val: Any) -> str:
     s = lower_campo(val)
-    return s if s else "medio"
+    return s if s else ""
 
 
 def prioridad_normalizada(val: Any) -> str:
     s = lower_campo(val)
-    return s if s else "media"
+    return s if s else ""
 
 
 @dataclass
 class FilaImportNormalizada:
-    """
-    Una fila del Excel ya limpia (solo transformaciones de texto/fechas/moviliza).
-    ``errores_normalizacion`` reúne fallos de formato antes de tocar la base de datos.
-    """
+    """Fila del Excel normalizada; ningún campo es obligatorio a nivel de plantilla."""
 
     fila_excel: int
     nombre: str = ""
@@ -127,33 +114,36 @@ class FilaImportNormalizada:
     partido: str = ""
     tipo: str = ""
     relacion: str = ""
-    afinidad: str = "neutro"
-    influencia: str = "medio"
-    moviliza: bool | None = None
+    afinidad: str = ""
+    influencia: str = ""
+    moviliza: bool = False
     ultimo_contacto: date | None = None
     proximo_contacto: date | None = None
     responsable: str = ""
-    prioridad: str = "media"
+    prioridad: str = ""
     notas: str = ""
     periodo: str = ""
-    errores_normalizacion: list[str] = field(default_factory=list)
+
+
+def _trunc(s: str, max_len: int) -> str:
+    if len(s) <= max_len:
+        return s
+    return s[:max_len]
 
 
 def normalizar_dataframe_import_contactos(df: pd.DataFrame) -> list[FilaImportNormalizada]:
     """
     Recorre el DataFrame completo y devuelve una lista de filas ya normalizadas.
 
-    No accede a la base de datos. Debe llamarse con columnas ya renombradas (snake_case).
-    La columna ``provincia`` puede ir vacía si en la importación se infiere por el municipio.
+    No accede a la base de datos. Ningún valor obligatorio: textos largos se truncan silenciosamente.
     """
     salida: list[FilaImportNormalizada] = []
     for idx, row in df.iterrows():
         fila_excel = int(idx) + 2
-        errs: list[str] = []
 
-        nombre = trim(row.get("nombre"))
-        apellidos = trim(row.get("apellidos"))
-        telefono = null_a_vacio(row.get("telefono"))
+        nombre = _trunc(trim(row.get("nombre")), 120)
+        apellidos = _trunc(trim(row.get("apellidos")), 180)
+        telefono = _trunc(null_a_vacio(row.get("telefono")), 40)
         provincia = upper_catalogo(row.get("provincia"))
         municipio = upper_catalogo(row.get("municipio"))
         cargo = upper_catalogo(row.get("cargo"))
@@ -165,42 +155,11 @@ def normalizar_dataframe_import_contactos(df: pd.DataFrame) -> list[FilaImportNo
         prioridad = prioridad_normalizada(row.get("prioridad"))
         responsable = null_a_vacio(row.get("responsable"))
         notas = null_a_vacio(row.get("notas"))
-        periodo = periodo_a_str(row.get("periodo"))
+        periodo = _trunc(periodo_a_str(row.get("periodo")), 64)
 
-        mov, err_mov = parse_moviliza_si_no(row.get("moviliza"))
-        if err_mov:
-            errs.append(err_mov)
-
-        ultimo, u_err = parse_fecha_iso(row.get("ultimo_contacto"))
-        if u_err:
-            errs.append(f"ultimo_contacto: {u_err}")
-        proximo, p_err = parse_fecha_iso(row.get("proximo_contacto"))
-        if p_err:
-            errs.append(f"proximo_contacto: {p_err}")
-
-        if not nombre:
-            errs.append("nombre obligatorio vacío")
-        if not apellidos:
-            errs.append("apellidos obligatorio vacío")
-        if not municipio:
-            errs.append("municipio vacío")
-        if not cargo:
-            errs.append("cargo vacío")
-        if not partido:
-            errs.append("partido vacío")
-        if not tipo:
-            errs.append("tipo vacío")
-        if not relacion:
-            errs.append("relacion vacía")
-        if not periodo:
-            errs.append("periodo vacío")
-
-        if len(nombre) > 120:
-            errs.append(f"nombre excede 120 caracteres ({len(nombre)})")
-        if len(apellidos) > 180:
-            errs.append(f"apellidos exceden 180 caracteres ({len(apellidos)})")
-        if len(telefono) > 40:
-            errs.append(f"telefono excede 40 caracteres ({len(telefono)})")
+        mov = parse_moviliza_opcional(row.get("moviliza"))
+        ultimo = parse_fecha_opcional(row.get("ultimo_contacto"))
+        proximo = parse_fecha_opcional(row.get("proximo_contacto"))
 
         salida.append(
             FilaImportNormalizada(
@@ -223,7 +182,6 @@ def normalizar_dataframe_import_contactos(df: pd.DataFrame) -> list[FilaImportNo
                 prioridad=prioridad,
                 notas=notas,
                 periodo=periodo,
-                errores_normalizacion=errs,
             )
         )
     return salida

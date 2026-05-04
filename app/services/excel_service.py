@@ -118,6 +118,8 @@ def _cargar_mapas_catalogo(db: Session) -> tuple[
 
 def _resolver_relacion(rel_map: dict[str, Relacion], texto_excel: str) -> Relacion | None:
     """Primero la regla del catálogo (sin_contacto → SIN CONTACTO); luego clave normalizada."""
+    if not texto_excel or not str(texto_excel).strip():
+        return None
     clave = relacion_service.normalizar_nombre_relacion(texto_excel.strip())
     if clave in rel_map:
         return rel_map[clave]
@@ -163,26 +165,26 @@ def _candidatos_municipio_por_nombre(
     return list(seen.values())
 
 
-COLUMNAS_REQUERIDAS: frozenset[str] = frozenset(
-    {
-        "nombre",
-        "apellidos",
-        "telefono",
-        "municipio",
-        "cargo",
-        "partido",
-        "tipo",
-        "relacion",
-        "afinidad",
-        "influencia",
-        "moviliza",
-        "ultimo_contacto",
-        "proximo_contacto",
-        "responsable",
-        "prioridad",
-        "notas",
-        "periodo",
-    }
+# Columnas reconocidas por el import (si faltan en el Excel se añaden vacías). Ninguna es obligatoria.
+COLUMNAS_IMPORT_CONTACTO: tuple[str, ...] = (
+    "nombre",
+    "apellidos",
+    "telefono",
+    "provincia",
+    "municipio",
+    "cargo",
+    "partido",
+    "tipo",
+    "relacion",
+    "afinidad",
+    "influencia",
+    "moviliza",
+    "ultimo_contacto",
+    "proximo_contacto",
+    "responsable",
+    "prioridad",
+    "notas",
+    "periodo",
 )
 
 
@@ -193,8 +195,8 @@ def importar_excel_contactos(
     omitir_duplicados: bool = False,
 ) -> dict[str, Any]:
     """
-    Lee ``.xlsx``, **normaliza todas las filas** (sin BD), luego valida contra catálogos,
-    deduplica opcionalmente e inserta en bloque con ``bulk_insert_mappings``.
+    Lee ``.xlsx``, normaliza filas, resuelve catálogos cuando hay coincidencia
+    (si no hay, deja FKs en ``NULL``) e inserta todas las filas en bloque.
     """
     if not archivo.filename or not archivo.filename.lower().endswith(".xlsx"):
         raise HTTPException(
@@ -222,15 +224,9 @@ def importar_excel_contactos(
         }
 
     df.columns = [normalizer.normalizar_nombre_columna_excel(c) for c in df.columns]
-    columnas = set(df.columns)
-    faltan = COLUMNAS_REQUERIDAS - columnas
-    if faltan:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Faltan columnas obligatorias en el Excel: {sorted(faltan)}",
-        )
-    if "provincia" not in df.columns:
-        df["provincia"] = ""
+    for col in COLUMNAS_IMPORT_CONTACTO:
+        if col not in df.columns:
+            df[col] = ""
 
     filas_normalizadas = normalizer.normalizar_dataframe_import_contactos(df)
     log.info("Import Excel: normalizadas %s filas (sin BD)", len(filas_normalizadas))
@@ -248,128 +244,72 @@ def importar_excel_contactos(
         len({id(v) for v in rel_map.values()}),
     )
 
-    detalle_errores: list[dict[str, Any]] = []
     mappings: list[dict[str, Any]] = []
-    vistos_archivo: set[tuple[str, str, int]] = set()
 
     for fn in filas_normalizadas:
-        fila = fn.fila_excel
-        errs: list[str] = list(fn.errores_normalizacion)
-
         provincia: Provincia | None = None
         municipio: Municipio | None = None
 
         if fn.provincia:
             provincia = _resolver_por_mapa(prov_map, fn.provincia)
-            if not provincia:
-                errs.append(f"provincia no encontrada en BD (valor Excel): {fn.provincia}")
 
         if fn.municipio:
             if provincia is not None:
                 municipio = _resolver_municipio(mun_map, provincia.id, fn.municipio)
-                if not municipio:
-                    errs.append(
-                        f"municipio no encontrado en BD para la provincia indicada (valor Excel): {fn.municipio}"
-                    )
-                elif municipio.provincia_id != provincia.id:
-                    errs.append(
-                        "municipio no pertenece a la provincia del Excel; "
-                        "corrija la provincia o déjela vacía para tomarla automáticamente del municipio"
-                    )
-            else:
+            if municipio is None:
                 candidatos = _candidatos_municipio_por_nombre(mun_por_nombre_idx, fn.municipio)
                 if len(candidatos) == 1:
                     municipio = candidatos[0]
                     provincia = prov_por_id.get(municipio.provincia_id)
-                    if provincia is None:
-                        errs.append("provincia asociada al municipio no encontrada en catálogo")
-                elif len(candidatos) == 0:
-                    errs.append(f"municipio no encontrado en BD (valor Excel): {fn.municipio}")
-                else:
-                    nombres_prov = sorted(
-                        {prov_por_id[m.provincia_id].nombre for m in candidatos if m.provincia_id in prov_por_id}
-                    )
-                    errs.append(
-                        "municipio ambiguo: existe en varias provincias; indique la columna provincia. "
-                        f"Candidatas: {', '.join(nombres_prov)}"
-                    )
+                elif len(candidatos) > 1 and provincia is not None:
+                    for c in candidatos:
+                        if c.provincia_id == provincia.id:
+                            municipio = c
+                            break
 
         cargo = _resolver_por_mapa(cargo_map, fn.cargo) if fn.cargo else None
-        if fn.cargo and not cargo:
-            errs.append(f"cargo no encontrado en BD (valor Excel): {fn.cargo}")
-
         partido = _resolver_por_mapa(partido_map, fn.partido) if fn.partido else None
-        if fn.partido and not partido:
-            errs.append(f"partido no encontrado en BD (valor Excel): {fn.partido}")
-
         tipo = _resolver_por_mapa(tipo_map, fn.tipo) if fn.tipo else None
-        if fn.tipo and not tipo:
-            errs.append(f"tipo no encontrado en BD (valor Excel): {fn.tipo}")
-
         relacion = _resolver_relacion(rel_map, fn.relacion) if fn.relacion else None
-        if fn.relacion and not relacion:
-            errs.append(f"relacion no encontrada en BD (valor Excel): {fn.relacion}")
 
-        if errs:
-            log.warning("Import Excel fila %s errores=%s", fila, errs)
-            detalle_errores.append({"fila": fila, "errores": errs})
-            continue
-
-        if not (
-            provincia
-            and municipio
-            and cargo
-            and partido
-            and tipo
-            and relacion
-            and fn.moviliza is not None
-        ):
-            log.error("Import Excel fila %s estado inconsistente tras validar catálogo", fila)
-            detalle_errores.append({"fila": fila, "errores": ["error interno de validación"]})
-            continue
-
-        clave_dup = (fn.nombre, fn.apellidos, municipio.id)
-        if clave_dup in vistos_archivo:
-            detalle_errores.append(
-                {"fila": fila, "errores": ["duplicado en el mismo archivo (nombre+apellidos+municipio_id)"]}
-            )
-            continue
-        vistos_archivo.add(clave_dup)
-
-        tel_db = fn.telefono if fn.telefono else None
-        responsable = fn.responsable if fn.responsable else None
-        notas = fn.notas if fn.notas else None
+        tel_db = fn.telefono or None
+        responsable = fn.responsable or None
+        notas = fn.notas or None
 
         mappings.append(
             {
-                "nombre": fn.nombre,
-                "apellidos": fn.apellidos,
+                "nombre": fn.nombre or None,
+                "apellidos": fn.apellidos or None,
                 "telefono": tel_db,
-                "municipio_id": municipio.id,
-                "provincia_id": provincia.id,
-                "cargo_id": cargo.id,
-                "partido_id": partido.id,
-                "tipo_id": tipo.id,
-                "relacion_id": relacion.id,
-                "afinidad": fn.afinidad,
-                "influencia": fn.influencia,
+                "municipio_id": municipio.id if municipio else None,
+                "provincia_id": provincia.id if provincia else None,
+                "cargo_id": cargo.id if cargo else None,
+                "partido_id": partido.id if partido else None,
+                "tipo_id": tipo.id if tipo else None,
+                "relacion_id": relacion.id if relacion else None,
+                "afinidad": fn.afinidad or None,
+                "influencia": fn.influencia or None,
                 "moviliza": fn.moviliza,
                 "ultimo_contacto": fn.ultimo_contacto,
                 "proximo_contacto": fn.proximo_contacto,
                 "responsable": responsable,
-                "prioridad": fn.prioridad,
+                "prioridad": fn.prioridad or None,
                 "notas": notas,
-                "periodo": fn.periodo,
+                "periodo": fn.periodo or None,
             }
         )
 
     omitidos_dup = 0
     if omitir_duplicados and mappings:
-        claves = [(m["nombre"], m["apellidos"], m["municipio_id"]) for m in mappings]
-        existentes: set[tuple[str, str, int]] = set()
+        con_mun = [m for m in mappings if m.get("municipio_id") is not None]
+        sin_mun = [m for m in mappings if m.get("municipio_id") is None]
+        claves = [(m["nombre"], m["apellidos"], m["municipio_id"]) for m in con_mun]
+        existentes: set[tuple[Any, Any, int]] = set()
         chunk = 400
         for i in range(0, len(claves), chunk):
             sub = claves[i : i + chunk]
+            if not sub:
+                break
             stmt = select(Contacto.nombre, Contacto.apellidos, Contacto.municipio_id).where(
                 tuple_(Contacto.nombre, Contacto.apellidos, Contacto.municipio_id).in_(sub)
             )
@@ -377,17 +317,22 @@ def importar_excel_contactos(
                 existentes.add((r[0], r[1], r[2]))
 
         filtrados: list[dict[str, Any]] = []
-        for m in mappings:
+        for m in con_mun:
             ck = (m["nombre"], m["apellidos"], m["municipio_id"])
             if ck in existentes:
                 omitidos_dup += 1
-                log.info("Omitido duplicado en BD: %s %s mun=%s", ck[0], ck[1], ck[2])
+                log.info("Omitido duplicado en BD: %s", ck)
                 continue
             filtrados.append(m)
-        mappings = filtrados
+        mappings = sin_mun + filtrados
 
     mappings.sort(
-        key=lambda x: (x["provincia_id"], x["municipio_id"], x["apellidos"], x["nombre"]),
+        key=lambda x: (
+            x.get("provincia_id") or 0,
+            x.get("municipio_id") or 0,
+            x.get("apellidos") or "",
+            x.get("nombre") or "",
+        ),
     )
 
     insertados = 0
@@ -411,7 +356,7 @@ def importar_excel_contactos(
     return {
         "status": "ok",
         "insertados": insertados,
-        "errores": len(detalle_errores),
+        "errores": 0,
         "omitidos_duplicados": omitidos_dup,
-        "detalle_errores": detalle_errores,
+        "detalle_errores": [],
     }
