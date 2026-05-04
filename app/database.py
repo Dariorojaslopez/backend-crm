@@ -127,6 +127,8 @@ def aplicar_patch_contactos_opcional_una_vez() -> dict[str, object]:
         "influencia",
         "prioridad",
         "periodo",
+        # Columna legacy de esquemas antiguos (reemplazada por relacion_id).
+        "relacion",
     )
 
     eng = get_engine()
