@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.schemas.municipio import MunicipioResponse
 from app.schemas.provincia import ProvinciaCreate, ProvinciaResponse, ProvinciaUpdate
 from app.services import catalogo_service
 
@@ -16,13 +17,38 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/provincias", tags=["provincias"])
 
 
-@router.get("", response_model=list[ProvinciaResponse])
+@router.get(
+    "",
+    response_model=list[ProvinciaResponse],
+    summary="Listar todas las provincias",
+    description=(
+        "Catálogo completo ordenado por nombre. Sin parámetros devuelve todas; "
+        "con `nombre` filtra por coincidencia parcial (ILIKE)."
+    ),
+    operation_id="listar_todas_las_provincias",
+)
 def listar_provincias(
     db: Session = Depends(get_db),
-    nombre: str | None = Query(None, description="Búsqueda parcial (ILIKE), insensible a mayúsculas"),
+    nombre: str | None = Query(None, description="Opcional: búsqueda parcial por nombre (ILIKE)"),
 ) -> list[ProvinciaResponse]:
     rows = catalogo_service.listar_provincias(db, nombre=nombre)
     return [ProvinciaResponse.model_validate(r) for r in rows]
+
+
+@router.get("/{provincia_id}/municipios", response_model=list[MunicipioResponse])
+def listar_municipios_por_provincia(
+    provincia_id: int,
+    db: Session = Depends(get_db),
+) -> list[MunicipioResponse]:
+    """
+    Municipios de una provincia (REST anidado).
+
+    ``GET /provincias/{id}/municipios`` — 404 si la provincia no existe.
+    """
+    if catalogo_service.obtener_provincia(db, provincia_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provincia no encontrada")
+    rows = catalogo_service.listar_municipios(db, provincia_id=provincia_id)
+    return [MunicipioResponse.model_validate(r) for r in rows]
 
 
 @router.get("/{provincia_id}", response_model=ProvinciaResponse)

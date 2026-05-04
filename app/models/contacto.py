@@ -12,6 +12,7 @@ from app.models.cargo import Cargo
 from app.models.municipio import Municipio
 from app.models.partido import Partido
 from app.models.provincia import Provincia
+from app.models.relacion import Relacion
 from app.models.tipo import Tipo
 
 
@@ -48,10 +49,14 @@ class Contacto(Base):
         nullable=False,
         index=True,
     )
+    relacion_id: Mapped[int] = mapped_column(
+        ForeignKey("relaciones.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
 
     afinidad: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     influencia: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    relacion: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
 
     moviliza: Mapped[bool] = mapped_column(
         Boolean,
@@ -80,3 +85,4 @@ class Contacto(Base):
     cargo: Mapped[Cargo] = relationship("Cargo", back_populates="contactos")
     partido: Mapped[Partido] = relationship("Partido", back_populates="contactos")
     tipo: Mapped[Tipo] = relationship("Tipo", back_populates="contactos")
+    relacion: Mapped[Relacion] = relationship("Relacion", back_populates="contactos")

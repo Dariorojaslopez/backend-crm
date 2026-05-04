@@ -16,10 +16,19 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/cargos", tags=["cargos"])
 
 
-@router.get("", response_model=list[CargoResponse])
+@router.get(
+    "",
+    response_model=list[CargoResponse],
+    summary="Listar todos los cargos",
+    description=(
+        "Catálogo completo de cargos (id, nombre), ordenado por nombre ascendente. "
+        "Opcional: `nombre` filtra por coincidencia parcial (ILIKE)."
+    ),
+    operation_id="listar_todos_los_cargos",
+)
 def listar_cargos(
     db: Session = Depends(get_db),
-    nombre: str | None = Query(None, description="Búsqueda parcial (ILIKE)"),
+    nombre: str | None = Query(None, description="Opcional: búsqueda parcial por nombre (ILIKE)"),
 ) -> list[CargoResponse]:
     rows = catalogo_service.listar_cargos(db, nombre=nombre)
     return [CargoResponse.model_validate(r) for r in rows]

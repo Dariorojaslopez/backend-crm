@@ -17,10 +17,10 @@ class ContactoCreate(BaseModel):
     cargo_id: int = Field(..., ge=1)
     partido_id: int = Field(..., ge=1)
     tipo_id: int = Field(..., ge=1)
+    relacion_id: int = Field(..., ge=1)
 
     afinidad: str = Field(..., description="aliado | neutro | opositor")
     influencia: str = Field(..., description="alto | medio | bajo")
-    relacion: str = Field(..., description="fuerte | media | debil | sin_contacto")
 
     moviliza: bool = False
 
@@ -45,10 +45,10 @@ class ContactoUpdate(BaseModel):
     cargo_id: int | None = Field(None, ge=1)
     partido_id: int | None = Field(None, ge=1)
     tipo_id: int | None = Field(None, ge=1)
+    relacion_id: int | None = Field(None, ge=1)
 
     afinidad: str | None = None
     influencia: str | None = None
-    relacion: str | None = None
 
     moviliza: bool | None = None
 
@@ -76,16 +76,17 @@ class ContactoResponse(BaseModel):
     cargo_id: int
     partido_id: int
     tipo_id: int
+    relacion_id: int
 
     municipio_nombre: str | None = None
     provincia_nombre: str | None = None
     cargo_nombre: str | None = None
     partido_nombre: str | None = None
     tipo_nombre: str | None = None
+    relacion_nombre: str | None = None
 
     afinidad: str
     influencia: str
-    relacion: str
 
     moviliza: bool
 

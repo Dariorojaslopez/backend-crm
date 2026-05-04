@@ -16,10 +16,19 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/partidos", tags=["partidos"])
 
 
-@router.get("", response_model=list[PartidoResponse])
+@router.get(
+    "",
+    response_model=list[PartidoResponse],
+    summary="Listar todos los partidos",
+    description=(
+        "Catálogo completo de partidos (id, nombre), ordenado por nombre ascendente. "
+        "Opcional: `nombre` filtra por coincidencia parcial (ILIKE)."
+    ),
+    operation_id="listar_todos_los_partidos",
+)
 def listar_partidos(
     db: Session = Depends(get_db),
-    nombre: str | None = Query(None, description="Búsqueda parcial (ILIKE)"),
+    nombre: str | None = Query(None, description="Opcional: búsqueda parcial por nombre (ILIKE)"),
 ) -> list[PartidoResponse]:
     rows = catalogo_service.listar_partidos(db, nombre=nombre)
     return [PartidoResponse.model_validate(r) for r in rows]

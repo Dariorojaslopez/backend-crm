@@ -15,7 +15,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import get_db_connection, try_get_engine
-from app.routers import cargos, contactos, importacion, municipios, partidos, provincias, seed_boyaca, tipos
+from app.routers import (
+    cargos,
+    contactos,
+    importacion,
+    municipios,
+    partidos,
+    provincias,
+    relaciones,
+    seed_boyaca,
+    seed_relaciones,
+    tipos,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,7 +70,9 @@ app.include_router(municipios.router)
 app.include_router(cargos.router)
 app.include_router(partidos.router)
 app.include_router(tipos.router)
+app.include_router(relaciones.router)
 app.include_router(seed_boyaca.router)
+app.include_router(seed_relaciones.router)
 app.include_router(importacion.router)
 
 

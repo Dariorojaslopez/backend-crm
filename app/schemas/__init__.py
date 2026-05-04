@@ -4,6 +4,7 @@ from app.schemas.cargo import CargoCreate, CargoResponse, CargoUpdate
 from app.schemas.contacto import ContactoCreate, ContactoResponse, ContactoUpdate
 from app.schemas.municipio import MunicipioCreate, MunicipioResponse, MunicipioUpdate
 from app.schemas.pagination import PaginatedResponse
+from app.schemas.relacion import RelacionCreate, RelacionResponse, RelacionUpdate
 from app.schemas.seed_boyaca import SeedBoyacaResponse
 from app.schemas.partido import PartidoCreate, PartidoResponse, PartidoUpdate
 from app.schemas.provincia import ProvinciaCreate, ProvinciaResponse, ProvinciaUpdate
@@ -20,6 +21,9 @@ __all__ = [
     "MunicipioResponse",
     "MunicipioUpdate",
     "PaginatedResponse",
+    "RelacionCreate",
+    "RelacionResponse",
+    "RelacionUpdate",
     "SeedBoyacaResponse",
     "PartidoCreate",
     "PartidoResponse",

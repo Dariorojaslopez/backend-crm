@@ -14,10 +14,10 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import Cargo, Contacto, Municipio, Partido, Tipo
+from app.models import Cargo, Contacto, Municipio, Partido, Relacion, Tipo
 from app.schemas.contacto import ContactoCreate, ContactoResponse, ContactoUpdate
 from app.schemas.pagination import PaginatedResponse
-from app.services import catalogo_service
+from app.services import catalogo_service, relacion_service
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +47,11 @@ def _validar_coherencia_geografica(db: Session, municipio_id: int, provincia_id:
         )
 
 
+def _validar_relacion_id(db: Session, relacion_id: int) -> None:
+    if not db.get(Relacion, relacion_id):
+        raise HTTPException(status_code=400, detail="relacion_id no existe")
+
+
 def _validar_fks_catalogo(db: Session, *, cargo_id: int, partido_id: int, tipo_id: int) -> None:
     if not db.get(Cargo, cargo_id):
         raise HTTPException(status_code=404, detail="Cargo no encontrado")
@@ -67,14 +72,15 @@ def serialize_contacto(c: Contacto) -> ContactoResponse:
         cargo_id=c.cargo_id,
         partido_id=c.partido_id,
         tipo_id=c.tipo_id,
+        relacion_id=c.relacion_id,
         municipio_nombre=c.municipio.nombre if c.municipio else None,
         provincia_nombre=c.provincia.nombre if c.provincia else None,
         cargo_nombre=c.cargo.nombre if c.cargo else None,
         partido_nombre=c.partido.nombre if c.partido else None,
         tipo_nombre=c.tipo.nombre if c.tipo else None,
+        relacion_nombre=c.relacion.nombre if c.relacion else None,
         afinidad=c.afinidad,
         influencia=c.influencia,
-        relacion=c.relacion,
         moviliza=c.moviliza,
         ultimo_contacto=c.ultimo_contacto,
         proximo_contacto=c.proximo_contacto,
@@ -94,6 +100,7 @@ def crear_contacto(db: Session, data: ContactoCreate) -> ContactoResponse:
         partido_id=data.partido_id,
         tipo_id=data.tipo_id,
     )
+    _validar_relacion_id(db, data.relacion_id)
     c = Contacto(
         nombre=data.nombre.strip(),
         apellidos=data.apellidos.strip(),
@@ -103,9 +110,9 @@ def crear_contacto(db: Session, data: ContactoCreate) -> ContactoResponse:
         cargo_id=data.cargo_id,
         partido_id=data.partido_id,
         tipo_id=data.tipo_id,
+        relacion_id=data.relacion_id,
         afinidad=_normalizar_texto_corto(data.afinidad) or "",
         influencia=_normalizar_texto_corto(data.influencia) or "",
-        relacion=_normalizar_texto_corto(data.relacion) or "",
         moviliza=data.moviliza,
         ultimo_contacto=data.ultimo_contacto,
         proximo_contacto=data.proximo_contacto,
@@ -132,6 +139,7 @@ def obtener_contacto(db: Session, contacto_id: int) -> Contacto | None:
             joinedload(Contacto.cargo),
             joinedload(Contacto.partido),
             joinedload(Contacto.tipo),
+            joinedload(Contacto.relacion),
         )
         .where(Contacto.id == contacto_id)
     )
@@ -146,9 +154,9 @@ def listar_contactos(
     cargo_id: int | None = None,
     partido_id: int | None = None,
     tipo_id: int | None = None,
+    relacion_id: int | None = None,
     afinidad: str | None = None,
     influencia: str | None = None,
-    relacion: str | None = None,
     periodo: str | None = None,
     nombre: str | None = None,
     page: int = 1,
@@ -170,12 +178,12 @@ def listar_contactos(
         filtros.append(Contacto.partido_id == partido_id)
     if tipo_id is not None:
         filtros.append(Contacto.tipo_id == tipo_id)
+    if relacion_id is not None:
+        filtros.append(Contacto.relacion_id == relacion_id)
     if afinidad:
         filtros.append(Contacto.afinidad == afinidad.strip().lower())
     if influencia:
         filtros.append(Contacto.influencia == influencia.strip().lower())
-    if relacion:
-        filtros.append(Contacto.relacion == relacion.strip().lower())
     if periodo:
         filtros.append(Contacto.periodo == periodo.strip())
     if nombre and nombre.strip():
@@ -198,6 +206,7 @@ def listar_contactos(
         joinedload(Contacto.cargo),
         joinedload(Contacto.partido),
         joinedload(Contacto.tipo),
+        joinedload(Contacto.relacion),
     )
     stmt = select(Contacto).options(*base_opts)
     if filtros:
@@ -242,8 +251,11 @@ def actualizar_contacto(db: Session, contacto_id: int, data: ContactoUpdate) -> 
     if "cargo_id" in payload or "partido_id" in payload or "tipo_id" in payload:
         _validar_fks_catalogo(db, cargo_id=cargo_id, partido_id=partido_id, tipo_id=tipo_id)
 
+    if "relacion_id" in payload and payload["relacion_id"] is not None:
+        _validar_relacion_id(db, int(payload["relacion_id"]))
+
     for campo, valor in payload.items():
-        if campo in {"afinidad", "influencia", "relacion", "prioridad"} and isinstance(valor, str):
+        if campo in {"afinidad", "influencia", "prioridad"} and isinstance(valor, str):
             valor = valor.strip().lower()
         if campo in {"nombre", "apellidos", "periodo"} and isinstance(valor, str):
             valor = valor.strip()
@@ -338,8 +350,8 @@ def importar_desde_excel(db: Session, archivo: UploadFile) -> dict[str, Any]:
     Importa filas desde Excel: busca o crea catálogos e inserta contactos.
 
     Columnas esperadas: nombre, apellidos, telefono, provincia, municipio,
-    partido, cargo, tipo, afinidad, influencia, relacion, moviliza,
-    ultimo_contacto, proximo_contacto, responsable, prioridad, notas, periodo.
+    partido, cargo, tipo, afinidad, influencia, relacion (texto → catálogo relaciones),
+    moviliza, ultimo_contacto, proximo_contacto, responsable, prioridad, notas, periodo.
     """
     if not archivo.filename or not archivo.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Solo se admiten archivos .xlsx (openpyxl)")
@@ -418,7 +430,13 @@ def importar_desde_excel(db: Session, archivo: UploadFile) -> dict[str, Any]:
             telefono = _limpiar_str(row.get("telefono"))
             afinidad = _limpiar_str_lower(row.get("afinidad")) or "neutro"
             influencia = _limpiar_str_lower(row.get("influencia")) or "medio"
-            relacion = _limpiar_str_lower(row.get("relacion")) or "sin_contacto"
+            relacion_raw = row.get("relacion")
+            if pd.isna(relacion_raw) or str(relacion_raw).strip() == "":
+                relacion_txt = "sin_contacto"
+            else:
+                relacion_txt = str(relacion_raw).strip()
+            rel = relacion_service.obtener_o_crear_relacion(db, relacion_txt)
+
             moviliza = _parse_bool_moviliza(row.get("moviliza"))
             ultimo = _parse_fecha(row.get("ultimo_contacto"))
             proximo = _parse_fecha(row.get("proximo_contacto"))
@@ -441,9 +459,9 @@ def importar_desde_excel(db: Session, archivo: UploadFile) -> dict[str, Any]:
                 cargo_id=cargo.id,
                 partido_id=partido.id,
                 tipo_id=tipo.id,
+                relacion_id=rel.id,
                 afinidad=afinidad,
                 influencia=influencia,
-                relacion=relacion,
                 moviliza=moviliza,
                 ultimo_contacto=ultimo,
                 proximo_contacto=proximo,

@@ -16,12 +16,33 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/municipios", tags=["municipios"])
 
 
-@router.get("", response_model=list[MunicipioResponse])
+@router.get(
+    "",
+    response_model=list[MunicipioResponse],
+    summary="Listar todos los municipios",
+    description=(
+        "Catálogo completo ordenado por nombre. Sin filtros devuelve todos los municipios. "
+        "Opcional: `provincia_id` acota a una provincia (404 si no existe); `nombre` filtra por ILIKE."
+    ),
+    operation_id="listar_todos_los_municipios",
+)
 def listar_municipios(
     db: Session = Depends(get_db),
-    nombre: str | None = Query(None, description="Búsqueda parcial (ILIKE)"),
-    provincia_id: int | None = Query(None, description="Filtrar por provincia", ge=1),
+    provincia_id: int | None = Query(
+        None,
+        description="Opcional: solo municipios de esta provincia",
+        ge=1,
+    ),
+    nombre: str | None = Query(None, description="Opcional: búsqueda parcial por nombre (ILIKE)"),
 ) -> list[MunicipioResponse]:
+    """
+    Lista municipios ordenados por nombre.
+
+    - Sin ``provincia_id``: todos los municipios (opcionalmente filtrados por ``nombre``).
+    - Con ``provincia_id``: solo los de esa provincia (404 si la provincia no existe).
+    """
+    if provincia_id is not None and catalogo_service.obtener_provincia(db, provincia_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provincia no encontrada")
     rows = catalogo_service.listar_municipios(db, provincia_id=provincia_id, nombre=nombre)
     return [MunicipioResponse.model_validate(r) for r in rows]
 

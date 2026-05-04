@@ -16,10 +16,19 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/tipos", tags=["tipos"])
 
 
-@router.get("", response_model=list[TipoResponse])
+@router.get(
+    "",
+    response_model=list[TipoResponse],
+    summary="Listar todos los tipos",
+    description=(
+        "Catálogo completo de tipos de figura (id, nombre), ordenado por nombre ascendente. "
+        "Opcional: `nombre` filtra por coincidencia parcial (ILIKE)."
+    ),
+    operation_id="listar_todos_los_tipos",
+)
 def listar_tipos(
     db: Session = Depends(get_db),
-    nombre: str | None = Query(None, description="Búsqueda parcial (ILIKE)"),
+    nombre: str | None = Query(None, description="Opcional: búsqueda parcial por nombre (ILIKE)"),
 ) -> list[TipoResponse]:
     rows = catalogo_service.listar_tipos(db, nombre=nombre)
     return [TipoResponse.model_validate(r) for r in rows]

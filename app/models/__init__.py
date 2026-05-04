@@ -6,6 +6,7 @@ from app.models.contacto import Contacto
 from app.models.municipio import Municipio
 from app.models.partido import Partido
 from app.models.provincia import Provincia
+from app.models.relacion import Relacion
 from app.models.tipo import Tipo
 
-__all__ = ["Base", "Cargo", "Contacto", "Municipio", "Partido", "Provincia", "Tipo"]
+__all__ = ["Base", "Cargo", "Contacto", "Municipio", "Partido", "Provincia", "Relacion", "Tipo"]
