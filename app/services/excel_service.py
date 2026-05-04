@@ -265,22 +265,33 @@ def importar_excel_contactos(
         provincia: Provincia | None = None
         municipio: Municipio | None = None
 
-        if fn.provincia:
-            provincia = _resolver_por_mapa(prov_map, fn.provincia)
-
+        # Regla principal: resolver por municipio (más confiable en el Excel de carga).
+        # Si encuentra municipio, la provincia se infiere desde el catálogo.
         if fn.municipio:
-            if provincia is not None:
-                municipio = _resolver_municipio(mun_map, provincia.id, fn.municipio)
-            if municipio is None:
-                candidatos = _candidatos_municipio_por_nombre(mun_por_nombre_idx, fn.municipio)
-                if len(candidatos) == 1:
-                    municipio = candidatos[0]
-                    provincia = prov_por_id.get(municipio.provincia_id)
-                elif len(candidatos) > 1 and provincia is not None:
-                    for c in candidatos:
-                        if c.provincia_id == provincia.id:
-                            municipio = c
-                            break
+            candidatos = _candidatos_municipio_por_nombre(mun_por_nombre_idx, fn.municipio)
+            if len(candidatos) == 1:
+                municipio = candidatos[0]
+                provincia = prov_por_id.get(municipio.provincia_id)
+            elif len(candidatos) > 1:
+                # Desempate opcional por provincia solo cuando haya homónimos.
+                if fn.provincia:
+                    prov_hint = _resolver_por_mapa(prov_map, fn.provincia)
+                    if prov_hint is not None:
+                        for c in candidatos:
+                            if c.provincia_id == prov_hint.id:
+                                municipio = c
+                                provincia = prov_por_id.get(c.provincia_id)
+                                break
+                if municipio is None:
+                    log.warning(
+                        "Municipio ambiguo en import (no se pudo resolver): '%s' candidatos=%s",
+                        fn.municipio,
+                        [c.id for c in candidatos],
+                    )
+
+        # Fallback: si no vino municipio o no se resolvió, intenta provincia por su cuenta.
+        if provincia is None and fn.provincia:
+            provincia = _resolver_por_mapa(prov_map, fn.provincia)
 
         cargo = _resolver_por_mapa(cargo_map, fn.cargo) if fn.cargo else None
         partido = _resolver_por_mapa(partido_map, fn.partido) if fn.partido else None
