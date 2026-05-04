@@ -348,9 +348,50 @@ def importar_excel_contactos(
         except Exception as exc:
             log.exception("Fallo bulk insert contactos desde Excel")
             db.rollback()
+            # Diagnóstico: intenta ubicar la primera fila que rompe el insert.
+            fila_pos: int | None = None
+            fila_data: dict[str, Any] | None = None
+            fila_error: str | None = None
+            for idx, row in enumerate(mappings, start=1):
+                try:
+                    with db.begin_nested():
+                        db.bulk_insert_mappings(Contacto, [row])
+                        db.flush()
+                except Exception as row_exc:  # noqa: BLE001
+                    fila_pos = idx
+                    fila_data = row
+                    fila_error = str(row_exc)
+                    break
+
+            if fila_pos is not None and fila_data is not None:
+                resumen = {
+                    "nombre": fila_data.get("nombre"),
+                    "apellidos": fila_data.get("apellidos"),
+                    "telefono": fila_data.get("telefono"),
+                    "municipio_id": fila_data.get("municipio_id"),
+                    "provincia_id": fila_data.get("provincia_id"),
+                    "cargo_id": fila_data.get("cargo_id"),
+                    "partido_id": fila_data.get("partido_id"),
+                    "tipo_id": fila_data.get("tipo_id"),
+                    "relacion_id": fila_data.get("relacion_id"),
+                    "afinidad": fila_data.get("afinidad"),
+                    "influencia": fila_data.get("influencia"),
+                    "prioridad": fila_data.get("prioridad"),
+                    "periodo": fila_data.get("periodo"),
+                }
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        "Error al insertar contactos en bloque. "
+                        f"Primera fila con error (posición en lote ordenado: {fila_pos}). "
+                        f"Motivo SQL: {fila_error or str(exc)}. "
+                        f"Resumen fila: {resumen}"
+                    ),
+                ) from exc
+
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error al insertar contactos en bloque; se revirtió la transacción de esta petición",
+                detail=f"Error al insertar contactos en bloque; motivo SQL: {exc}",
             ) from exc
 
     return {
