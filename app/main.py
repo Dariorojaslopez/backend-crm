@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import get_db_connection, try_get_engine
+from app.database import get_db_connection, get_session_factory, try_get_engine
 from app.routers import (
     cargos,
     contactos,
@@ -41,6 +41,25 @@ async def lifespan(app: FastAPI):
     ok, msg = get_db_connection()
     if ok:
         log.info("Base de datos accesible: %s", msg)
+        try:
+            from app.services.relacion_service import bootstrap_relaciones
+
+            factory = get_session_factory()
+            db = factory()
+            try:
+                resultado = bootstrap_relaciones(db)
+                db.commit()
+                log.info(
+                    "Esquema y relaciones por defecto listos (nuevas en este arranque: %s)",
+                    resultado.get("relaciones_creadas", 0),
+                )
+            except Exception:
+                db.rollback()
+                log.exception("No se pudo asegurar catálogo relaciones al arranque")
+            finally:
+                db.close()
+        except Exception:
+            log.exception("Bootstrap de base de datos al arranque falló")
     else:
         log.warning("Base de datos no verificada al arranque: %s", msg)
     yield

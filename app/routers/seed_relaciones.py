@@ -25,7 +25,7 @@ class SeedRelacionesResponse(BaseModel):
     "/relaciones",
     response_model=SeedRelacionesResponse,
     status_code=status.HTTP_200_OK,
-    summary="Insertar relaciones estándar (DEBIL, MEDIO, FUERTE, SIN CONTACTO) si faltan",
+    summary="Insertar relaciones estándar (DEBIL, MEDIA, FUERTE, SIN CONTACTO) si faltan",
 )
 def post_seed_relaciones(db: Session = Depends(get_db)) -> SeedRelacionesResponse:
     try:

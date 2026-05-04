@@ -97,17 +97,17 @@ def obtener_o_crear_relacion(db: Session, nombre_raw: str) -> Relacion:
     return r
 
 
-# Valores por defecto del seed (POST /seed/relaciones)
+# Valores por defecto del seed (POST /seed/relaciones y arranque de la API)
 RELACIONES_SEED: tuple[str, ...] = (
     "DEBIL",
-    "MEDIO",
+    "MEDIA",
     "FUERTE",
     "SIN CONTACTO",
 )
 
 
 def seed_relaciones(db: Session) -> dict[str, Any]:
-    """Inserta las relaciones estándar si no existen (idempotente)."""
+    """Inserta DEBIL, MEDIA, FUERTE y SIN CONTACTO si no existen (idempotente)."""
     creadas = 0
     for etiqueta in RELACIONES_SEED:
         n = normalizar_nombre_relacion(etiqueta)
@@ -118,3 +118,15 @@ def seed_relaciones(db: Session) -> dict[str, Any]:
     db.flush()
     log.info("seed_relaciones: creadas=%s", creadas)
     return {"relaciones_creadas": creadas}
+
+
+def bootstrap_relaciones(db: Session) -> dict[str, Any]:
+    """
+    Crea tablas si faltan (``init_db``) y garantiza las cuatro relaciones por defecto.
+
+    Pensado para arranque en Render u otros entornos donde no se ejecutó migración/seed manual.
+    """
+    from app.database import init_db
+
+    init_db()
+    return seed_relaciones(db)
