@@ -1,65 +1,90 @@
 """
-Punto de entrada de la API CRM.
+API CRM Boyacá — FastAPI + SQLAlchemy + PostgreSQL.
 
-Render (y otros hosts) ejecutan el servidor con:
+Ejecución típica (Render / local):
     uvicorn app.main:app --host 0.0.0.0 --port 10000
-
-La variable `app` debe existir en este módulo para que uvicorn la resuelva.
 """
 
+from __future__ import annotations
+
+import logging
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-# Importamos el motor definido en database.py (misma capa de paquete `app`).
-# No usamos modelos ORM; solo comprobamos conectividad con el pool del engine.
-from app.database import engine
+from app.database import get_db_connection, try_get_engine
+from app.routers import cargos, contactos, importacion, municipios, partidos, provincias, seed_boyaca, tipos
 
-# Instancia principal de FastAPI: aquí se registran rutas, middlewares, etc.
-app = FastAPI(
-    title="Backend CRM",
-    description="API con comprobación de PostgreSQL (Render) vía SQLAlchemy, sin ORM.",
-    version="0.1.0",
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+log = logging.getLogger("crm.api")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log.info("Arranque API version=%s", app.version)
+    ok, msg = get_db_connection()
+    if ok:
+        log.info("Base de datos accesible: %s", msg)
+    else:
+        log.warning("Base de datos no verificada al arranque: %s", msg)
+    yield
+    log.info("Apagado API")
+
+
+app = FastAPI(
+    title="CRM Contactos Políticos Boyacá",
+    description="Backend limpio para gestión de contactos con PostgreSQL.",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+_origins = os.getenv("CORS_ORIGINS", "*").strip()
+_allow_origins = [o.strip() for o in _origins.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allow_origins if _allow_origins else ["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(contactos.router, prefix="/contactos", tags=["contactos"])
+app.include_router(provincias.router)
+app.include_router(municipios.router)
+app.include_router(cargos.router)
+app.include_router(partidos.router)
+app.include_router(tipos.router)
+app.include_router(seed_boyaca.router)
+app.include_router(importacion.router)
 
 
 @app.get("/")
 def read_root():
-    """
-    Ruta raíz: comprobación rápida de que el servicio responde.
-    """
-    return {"message": "API funcionando 🔥"}
+    return {"message": "API CRM Boyacá", "docs": "/docs"}
 
 
 @app.get("/health")
 def health_check():
-    """
-    Health check para balanceadores y monitoreo (Render, Kubernetes, etc.).
-    """
     return {"status": "ok"}
 
 
 @app.get("/test-db")
 def test_db():
-    """
-    Comprueba que la app puede abrir y cerrar una conexión real al PostgreSQL de Render.
-
-    Flujo:
-    1. Verifica que ``engine`` exista (``DATABASE_URL`` configurada).
-    2. Abre conexión con ``engine.connect()``.
-    3. La cierra en un ``finally`` para liberar el recurso aunque falle el handshake.
-    4. Devuelve JSON de éxito o de error según el resultado.
-    """
-    # Sin URL no hay motor: evitamos llamar a SQLAlchemy con un engine inexistente.
-    if engine is None:
+    eng = try_get_engine()
+    if eng is None:
         return {"error": "DATABASE_URL no está definida en el entorno."}
 
     conn = None
     try:
-        # Intenta establecer la conexión TCP + TLS + autenticación con Postgres.
-        conn = engine.connect()
+        conn = eng.connect()
         return {"status": "conexion exitosa"}
-    except Exception as exc:  # noqa: BLE001 — exponemos el mensaje al cliente de prueba
+    except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
     finally:
-        # Siempre cerramos la conexión si se llegó a abrir (libera socket y recursos del pool).
         if conn is not None:
             conn.close()
