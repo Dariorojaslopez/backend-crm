@@ -154,6 +154,16 @@ def actualizar_contacto(
     return contacto_service.actualizar_contacto(db, contacto_id, payload)
 
 
+@router.delete(
+    "/all",
+    summary="Eliminar todos los contactos",
+    description="Borra todos los registros de contactos y retorna cuántos fueron eliminados.",
+)
+def eliminar_todos_contactos(db: Session = Depends(get_db)) -> dict[str, int | str]:
+    eliminados = contacto_service.eliminar_todos_contactos(db)
+    return {"status": "ok", "eliminados": eliminados}
+
+
 @router.delete("/{contacto_id}", status_code=status.HTTP_204_NO_CONTENT)
 def eliminar_contacto(contacto_id: int, db: Session = Depends(get_db)) -> None:
     contacto_service.eliminar_contacto(db, contacto_id)

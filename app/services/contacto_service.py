@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import Cargo, Contacto, Municipio, Partido, Provincia, Relacion, Tipo
@@ -350,3 +350,11 @@ def eliminar_contacto(db: Session, contacto_id: int) -> None:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
     db.delete(c)
     log.info("Contacto eliminado id=%s", contacto_id)
+
+
+def eliminar_todos_contactos(db: Session) -> int:
+    """Elimina todos los contactos y devuelve la cantidad de filas borradas."""
+    result = db.execute(delete(Contacto))
+    eliminados = int(result.rowcount or 0)
+    log.warning("Eliminación masiva de contactos completada, total=%s", eliminados)
+    return eliminados
