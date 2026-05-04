@@ -21,11 +21,7 @@ def post_import_excel(
     db: Session = Depends(get_db),
     archivo: UploadFile = File(
         ...,
-        description=(
-            "Archivo .xlsx con columnas: nombre, apellidos, telefono, municipio, provincia, cargo, "
-            "partido, tipo, relacion, afinidad, influencia, moviliza, ultimo_contacto, proximo_contacto, "
-            "responsable, prioridad, notas, periodo. Catálogos deben existir en BD (no se crean)."
-        ),
+        description="Plantilla .xlsx (multipart, campo `archivo`). Municipio obligatorio; provincia opcional (se infiere del municipio si no es ambiguo).",
     ),
     omitir_duplicados: bool = Query(
         False,

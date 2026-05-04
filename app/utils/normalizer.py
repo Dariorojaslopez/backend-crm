@@ -143,8 +143,8 @@ def normalizar_dataframe_import_contactos(df: pd.DataFrame) -> list[FilaImportNo
     """
     Recorre el DataFrame completo y devuelve una lista de filas ya normalizadas.
 
-    No accede a la base de datos. Debe llamarse con columnas ya renombradas
-    (snake_case) e incluir todas las columnas requeridas del import.
+    No accede a la base de datos. Debe llamarse con columnas ya renombradas (snake_case).
+    La columna ``provincia`` puede ir vacía si en la importación se infiere por el municipio.
     """
     salida: list[FilaImportNormalizada] = []
     for idx, row in df.iterrows():
@@ -182,8 +182,6 @@ def normalizar_dataframe_import_contactos(df: pd.DataFrame) -> list[FilaImportNo
             errs.append("nombre obligatorio vacío")
         if not apellidos:
             errs.append("apellidos obligatorio vacío")
-        if not provincia:
-            errs.append("provincia vacía")
         if not municipio:
             errs.append("municipio vacío")
         if not cargo:
