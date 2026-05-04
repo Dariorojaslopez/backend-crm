@@ -4,11 +4,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CargoCreate(BaseModel):
-    nombre: str = Field(..., min_length=1, max_length=120)
+    nombre: str = Field(..., min_length=1)
 
 
 class CargoUpdate(BaseModel):
-    nombre: str | None = Field(None, min_length=1, max_length=120)
+    nombre: str | None = Field(None, min_length=1)
 
 
 class CargoResponse(BaseModel):
