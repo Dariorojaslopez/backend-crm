@@ -28,13 +28,28 @@ _GUION_MI = "\u2012"  # figure dash
 
 def _clave_catalogo(s: str) -> str:
     """
-    Clave estable para comparar con la BD: NFKC, trim, espacios colapsados, mayúsculas.
+    Clave estable para comparar con la BD:
+    - normaliza Unicode,
+    - elimina tildes/diacríticos,
+    - homogeniza guiones/separadores,
+    - colapsa espacios y pasa a mayúsculas.
     Así "Boyacá ", "BOYACA" y variantes razonables coinciden con el nombre almacenado.
     """
     if not s:
         return ""
-    t = unicodedata.normalize("NFKC", str(s).strip())
-    t = re.sub(r"\s+", " ", t).upper()
+    t = str(s).strip()
+    # Casos observados en importaciones desde Excel con codificación irregular.
+    t = t.replace("\u00a0", " ")
+    t = t.replace("\u2010", "-").replace("\u2011", "-").replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-")
+    t = t.replace("\ufffd", " ")
+
+    # Quita tildes/diacríticos para comparar de forma robusta.
+    t = unicodedata.normalize("NFKD", t)
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+
+    # Deja solo alfanumérico, guion y espacios.
+    t = re.sub(r"[^A-Za-z0-9\- ]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip().upper()
     return t
 
 
