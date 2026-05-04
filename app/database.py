@@ -108,6 +108,63 @@ def init_db() -> None:
         Base.metadata.create_all(bind=conn)
 
 
+def aplicar_patch_contactos_opcional_una_vez() -> dict[str, object]:
+    """
+    Hace opcionales columnas históricas de ``contactos`` si aún tienen NOT NULL.
+
+    Es idempotente: en arranques posteriores no aplica cambios si ya están en NULLABLE.
+    """
+    objetivos: tuple[str, ...] = (
+        "nombre",
+        "apellidos",
+        "municipio_id",
+        "provincia_id",
+        "cargo_id",
+        "partido_id",
+        "tipo_id",
+        "relacion_id",
+        "afinidad",
+        "influencia",
+        "prioridad",
+        "periodo",
+    )
+
+    eng = get_engine()
+    aplicadas: list[str] = []
+    ya_ok: list[str] = []
+
+    with eng.begin() as conn:
+        for col in objetivos:
+            is_nullable = conn.execute(
+                text(
+                    """
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'contactos'
+                      AND column_name = :column_name
+                    """
+                ),
+                {"column_name": col},
+            ).scalar_one_or_none()
+
+            if is_nullable is None:
+                continue
+
+            if str(is_nullable).upper() == "YES":
+                ya_ok.append(col)
+                continue
+
+            conn.execute(text(f"ALTER TABLE contactos ALTER COLUMN {col} DROP NOT NULL"))
+            aplicadas.append(col)
+
+    return {
+        "columnas_objetivo": list(objetivos),
+        "columnas_actualizadas": aplicadas,
+        "columnas_ya_opcionales": ya_ok,
+    }
+
+
 def get_db_connection() -> tuple[bool, str]:
     """Prueba rápida de conectividad (health / diagnóstico)."""
     try:

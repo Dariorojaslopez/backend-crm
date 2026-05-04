@@ -14,7 +14,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import get_db_connection, get_session_factory, try_get_engine
+from app.database import (
+    aplicar_patch_contactos_opcional_una_vez,
+    get_db_connection,
+    get_session_factory,
+    try_get_engine,
+)
 from app.routers import (
     cargos,
     contactos,
@@ -45,6 +50,16 @@ async def lifespan(app: FastAPI):
     if ok:
         log.info("Base de datos accesible: %s", msg)
         try:
+            try:
+                patch = aplicar_patch_contactos_opcional_una_vez()
+                log.info(
+                    "Patch contactos opcional aplicado=%s ya_opcionales=%s",
+                    len(patch.get("columnas_actualizadas", [])),
+                    len(patch.get("columnas_ya_opcionales", [])),
+                )
+            except Exception:
+                log.exception("No se pudo aplicar patch opcional de contactos al arranque")
+
             from app.services.relacion_service import bootstrap_relaciones
 
             factory = get_session_factory()
