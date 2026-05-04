@@ -53,9 +53,10 @@ async def lifespan(app: FastAPI):
             try:
                 patch = aplicar_patch_contactos_opcional_una_vez()
                 log.info(
-                    "Patch contactos opcional aplicado=%s ya_opcionales=%s",
+                    "Patch contactos opcional aplicado=%s ya_opcionales=%s cambios_estructura=%s",
                     len(patch.get("columnas_actualizadas", [])),
                     len(patch.get("columnas_ya_opcionales", [])),
+                    len(patch.get("cambios_estructura", [])),
                 )
             except Exception:
                 log.exception("No se pudo aplicar patch opcional de contactos al arranque")

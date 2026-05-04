@@ -132,8 +132,66 @@ def aplicar_patch_contactos_opcional_una_vez() -> dict[str, object]:
     eng = get_engine()
     aplicadas: list[str] = []
     ya_ok: list[str] = []
+    cambios_estructura: list[str] = []
 
     with eng.begin() as conn:
+        tabla_contactos = conn.execute(text("SELECT to_regclass('contactos')")).scalar_one_or_none()
+        if tabla_contactos is None:
+            return {
+                "columnas_objetivo": list(objetivos),
+                "columnas_actualizadas": aplicadas,
+                "columnas_ya_opcionales": ya_ok,
+                "cambios_estructura": cambios_estructura,
+            }
+
+        # Compatibilidad con esquemas antiguos: si falta relacion_id, la crea.
+        relacion_id_nullable = conn.execute(
+            text(
+                """
+                SELECT is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'contactos'
+                  AND column_name = 'relacion_id'
+                """
+            )
+        ).scalar_one_or_none()
+        if relacion_id_nullable is None:
+            conn.execute(text("ALTER TABLE contactos ADD COLUMN relacion_id INTEGER NULL"))
+            cambios_estructura.append("add_column:contactos.relacion_id")
+
+        # FK + índice de relacion_id (idempotente).
+        tabla_relaciones = conn.execute(text("SELECT to_regclass('relaciones')")).scalar_one_or_none()
+        if tabla_relaciones is not None:
+            fk_existe = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'contactos_relacion_id_fkey'
+                      AND conrelid = 'contactos'::regclass
+                    """
+                )
+            ).scalar_one_or_none()
+            if fk_existe is None:
+                conn.execute(
+                    text(
+                        """
+                        ALTER TABLE contactos
+                        ADD CONSTRAINT contactos_relacion_id_fkey
+                        FOREIGN KEY (relacion_id) REFERENCES relaciones(id) ON DELETE RESTRICT
+                        """
+                    )
+                )
+                cambios_estructura.append("add_fk:contactos.relacion_id->relaciones.id")
+
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_contactos_relacion_id ON contactos (relacion_id)"
+            )
+        )
+        cambios_estructura.append("ensure_index:ix_contactos_relacion_id")
+
         for col in objetivos:
             is_nullable = conn.execute(
                 text(
@@ -162,6 +220,7 @@ def aplicar_patch_contactos_opcional_una_vez() -> dict[str, object]:
         "columnas_objetivo": list(objetivos),
         "columnas_actualizadas": aplicadas,
         "columnas_ya_opcionales": ya_ok,
+        "cambios_estructura": cambios_estructura,
     }
 
 
