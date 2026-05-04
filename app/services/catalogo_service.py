@@ -72,8 +72,9 @@ def listar_partidos(db: Session, nombre: str | None = None) -> Sequence[Partido]
 def listar_tipos(db: Session, nombre: str | None = None) -> Sequence[Tipo]:
     log.debug("Listando tipos nombre=%s", nombre)
     stmt = select(Tipo).order_by(Tipo.nombre.asc())
-    if nombre and nombre.strip():
-        stmt = stmt.where(Tipo.nombre.ilike(f"%{nombre.strip()}%"))
+    if nombre is not None and nombre.strip() != "":
+        pat = f"%{_fragmento_like_seguro(nombre.strip())}%"
+        stmt = stmt.where(Tipo.nombre.ilike(pat, escape="\\"))
     return db.scalars(stmt).all()
 
 
@@ -337,7 +338,9 @@ def obtener_tipo(db: Session, tipo_id: int) -> Tipo | None:
 
 
 def crear_tipo(db: Session, data: TipoCreate) -> Tipo:
-    n = normalizar_nombre_catalogo(data.nombre)
+    n = data.nombre.strip()
+    if not n:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="nombre no puede estar vacío")
     if db.scalar(select(Tipo).where(Tipo.nombre == n)):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -356,7 +359,9 @@ def actualizar_tipo(db: Session, tipo_id: int, data: TipoUpdate) -> Tipo:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tipo no encontrado")
     if data.nombre is None:
         return t
-    n = normalizar_nombre_catalogo(data.nombre)
+    n = data.nombre.strip()
+    if not n:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="nombre no puede estar vacío")
     existente = db.scalar(select(Tipo).where(Tipo.nombre == n, Tipo.id != tipo_id))
     if existente:
         raise HTTPException(

@@ -27,6 +27,7 @@ from app.routers import (
     seed_cargos,
     seed_partidos,
     seed_relaciones,
+    seed_tipos,
     tipos,
 )
 
@@ -96,6 +97,7 @@ app.include_router(seed_boyaca.router)
 app.include_router(seed_relaciones.router)
 app.include_router(seed_cargos.router)
 app.include_router(seed_partidos.router)
+app.include_router(seed_tipos.router)
 app.include_router(importacion.router)
 
 
