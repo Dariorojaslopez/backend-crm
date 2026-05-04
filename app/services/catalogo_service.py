@@ -20,6 +20,11 @@ from app.schemas.tipo import TipoCreate, TipoUpdate
 log = logging.getLogger(__name__)
 
 
+def _fragmento_like_seguro(fragment: str) -> str:
+    """Escapa ``\\``, ``%`` y ``_`` para un patrón LIKE con ESCAPE barra invertida."""
+    return fragment.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def normalizar_nombre_catalogo(nombre: str) -> str:
     """Unifica nombres de catálogo en mayúsculas (consistente con importación Excel)."""
     return nombre.strip().upper()
@@ -58,8 +63,9 @@ def listar_cargos(db: Session, nombre: str | None = None) -> Sequence[Cargo]:
 def listar_partidos(db: Session, nombre: str | None = None) -> Sequence[Partido]:
     log.debug("Listando partidos nombre=%s", nombre)
     stmt = select(Partido).order_by(Partido.nombre.asc())
-    if nombre and nombre.strip():
-        stmt = stmt.where(Partido.nombre.ilike(f"%{nombre.strip()}%"))
+    if nombre is not None and nombre != "":
+        pat = f"%{_fragmento_like_seguro(nombre)}%"
+        stmt = stmt.where(Partido.nombre.like(pat, escape="\\"))
     return db.scalars(stmt).all()
 
 

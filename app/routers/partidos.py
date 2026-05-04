@@ -22,13 +22,13 @@ router = APIRouter(prefix="/partidos", tags=["partidos"])
     summary="Listar todos los partidos",
     description=(
         "Catálogo completo de partidos (id, nombre), ordenado por nombre ascendente. "
-        "Opcional: `nombre` filtra por coincidencia parcial (ILIKE)."
+        "Opcional: `nombre` filtra por coincidencia parcial (LIKE, sensible a mayúsculas/minúsculas)."
     ),
     operation_id="listar_todos_los_partidos",
 )
 def listar_partidos(
     db: Session = Depends(get_db),
-    nombre: str | None = Query(None, description="Opcional: búsqueda parcial por nombre (ILIKE)"),
+    nombre: str | None = Query(None, description="Opcional: búsqueda parcial por nombre (LIKE %valor%)"),
 ) -> list[PartidoResponse]:
     rows = catalogo_service.listar_partidos(db, nombre=nombre)
     return [PartidoResponse.model_validate(r) for r in rows]
