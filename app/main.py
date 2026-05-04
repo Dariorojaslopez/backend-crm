@@ -18,7 +18,7 @@ from app.database import get_db_connection, get_session_factory, try_get_engine
 from app.routers import (
     cargos,
     contactos,
-    importacion,
+    import_excel,
     municipios,
     partidos,
     provincias,
@@ -98,7 +98,7 @@ app.include_router(seed_relaciones.router)
 app.include_router(seed_cargos.router)
 app.include_router(seed_partidos.router)
 app.include_router(seed_tipos.router)
-app.include_router(importacion.router)
+app.include_router(import_excel.router)
 
 
 @app.get("/")

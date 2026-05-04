@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-import io
 import logging
 import math
-import re
 from datetime import date, datetime
+from collections.abc import Sequence
 from typing import Any
 
-import pandas as pd
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import Cargo, Contacto, Municipio, Partido, Relacion, Tipo
 from app.schemas.contacto import ContactoCreate, ContactoResponse, ContactoUpdate
 from app.schemas.pagination import PaginatedResponse
-from app.services import catalogo_service, relacion_service
 
 log = logging.getLogger(__name__)
 
@@ -146,40 +143,49 @@ def obtener_contacto(db: Session, contacto_id: int) -> Contacto | None:
     return db.scalars(stmt).unique().one_or_none()
 
 
-def listar_contactos(
-    db: Session,
+def _ids_catalogo_validos(ids: Sequence[int] | None) -> list[int] | None:
+    """Lista deduplicada de enteros >= 1, o None si no hay filtro por catálogo."""
+    if ids is None or len(ids) == 0:
+        return None
+    out = sorted({int(x) for x in ids if x is not None and int(x) >= 1})
+    return out or None
+
+
+def _filtros_listado_contactos(
     *,
     municipio_id: int | None = None,
+    municipio_ids: Sequence[int] | None = None,
     provincia_id: int | None = None,
+    provincia_ids: Sequence[int] | None = None,
     cargo_id: int | None = None,
+    cargo_ids: Sequence[int] | None = None,
     partido_id: int | None = None,
+    partido_ids: Sequence[int] | None = None,
     tipo_id: int | None = None,
+    tipo_ids: Sequence[int] | None = None,
     relacion_id: int | None = None,
+    relacion_ids: Sequence[int] | None = None,
     afinidad: str | None = None,
     influencia: str | None = None,
     periodo: str | None = None,
     nombre: str | None = None,
-    page: int = 1,
-    page_size: int = 20,
-) -> PaginatedResponse[ContactoResponse]:
-    if page < 1:
-        raise HTTPException(status_code=400, detail="page debe ser >= 1")
-    if page_size < 1 or page_size > 100:
-        raise HTTPException(status_code=400, detail="page_size entre 1 y 100")
-
+) -> list[Any]:
     filtros: list[Any] = []
-    if municipio_id is not None:
-        filtros.append(Contacto.municipio_id == municipio_id)
-    if provincia_id is not None:
-        filtros.append(Contacto.provincia_id == provincia_id)
-    if cargo_id is not None:
-        filtros.append(Contacto.cargo_id == cargo_id)
-    if partido_id is not None:
-        filtros.append(Contacto.partido_id == partido_id)
-    if tipo_id is not None:
-        filtros.append(Contacto.tipo_id == tipo_id)
-    if relacion_id is not None:
-        filtros.append(Contacto.relacion_id == relacion_id)
+
+    def add(column: Any, single: int | None, multi: Sequence[int] | None) -> None:
+        m = _ids_catalogo_validos(multi)
+        if m is not None:
+            filtros.append(column.in_(m))
+        elif single is not None:
+            filtros.append(column == single)
+
+    add(Contacto.municipio_id, municipio_id, municipio_ids)
+    add(Contacto.provincia_id, provincia_id, provincia_ids)
+    add(Contacto.cargo_id, cargo_id, cargo_ids)
+    add(Contacto.partido_id, partido_id, partido_ids)
+    add(Contacto.tipo_id, tipo_id, tipo_ids)
+    add(Contacto.relacion_id, relacion_id, relacion_ids)
+
     if afinidad:
         filtros.append(Contacto.afinidad == afinidad.strip().lower())
     if influencia:
@@ -194,6 +200,54 @@ def listar_contactos(
                 Contacto.apellidos.ilike(term),
             )
         )
+    return filtros
+
+
+def listar_contactos(
+    db: Session,
+    *,
+    municipio_id: int | None = None,
+    municipio_ids: Sequence[int] | None = None,
+    provincia_id: int | None = None,
+    provincia_ids: Sequence[int] | None = None,
+    cargo_id: int | None = None,
+    cargo_ids: Sequence[int] | None = None,
+    partido_id: int | None = None,
+    partido_ids: Sequence[int] | None = None,
+    tipo_id: int | None = None,
+    tipo_ids: Sequence[int] | None = None,
+    relacion_id: int | None = None,
+    relacion_ids: Sequence[int] | None = None,
+    afinidad: str | None = None,
+    influencia: str | None = None,
+    periodo: str | None = None,
+    nombre: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> PaginatedResponse[ContactoResponse]:
+    if page < 1:
+        raise HTTPException(status_code=400, detail="page debe ser >= 1")
+    if page_size < 1 or page_size > 100:
+        raise HTTPException(status_code=400, detail="page_size entre 1 y 100")
+
+    filtros = _filtros_listado_contactos(
+        municipio_id=municipio_id,
+        municipio_ids=municipio_ids,
+        provincia_id=provincia_id,
+        provincia_ids=provincia_ids,
+        cargo_id=cargo_id,
+        cargo_ids=cargo_ids,
+        partido_id=partido_id,
+        partido_ids=partido_ids,
+        tipo_id=tipo_id,
+        tipo_ids=tipo_ids,
+        relacion_id=relacion_id,
+        relacion_ids=relacion_ids,
+        afinidad=afinidad,
+        influencia=influencia,
+        periodo=periodo,
+        nombre=nombre,
+    )
 
     count_stmt = select(func.count()).select_from(Contacto)
     if filtros:
@@ -281,200 +335,3 @@ def eliminar_contacto(db: Session, contacto_id: int) -> None:
         raise HTTPException(status_code=404, detail="Contacto no encontrado")
     db.delete(c)
     log.info("Contacto eliminado id=%s", contacto_id)
-
-
-def _parse_bool_moviliza(val: Any) -> bool:
-    if pd.isna(val) or val is None or val == "":
-        return False
-    s = str(val).strip().upper()
-    if s in {"SI", "S", "TRUE", "1", "YES", "Y"}:
-        return True
-    if s in {"NO", "N", "FALSE", "0"}:
-        return False
-    return bool(val)
-
-
-def _parse_fecha(val: Any) -> date | None:
-    if pd.isna(val) or val is None or val == "":
-        return None
-    if isinstance(val, datetime):
-        return val.date()
-    if isinstance(val, date):
-        return val
-    ts = pd.to_datetime(val, errors="coerce")
-    if pd.isna(ts):
-        return None
-    return ts.date()
-
-
-def _limpiar_str(val: Any) -> str | None:
-    if pd.isna(val) or val is None:
-        return None
-    s = str(val).strip()
-    return s.upper() if s else None
-
-
-def _limpiar_nombre_persona(val: Any) -> str | None:
-    if pd.isna(val) or val is None:
-        return None
-    s = str(val).strip()
-    if not s:
-        return None
-    return " ".join(part.capitalize() for part in s.split())
-
-
-def _celda_periodo(val: Any) -> str:
-    if pd.isna(val) or val is None:
-        return ""
-    if isinstance(val, float):
-        if val == int(val):
-            return str(int(val))
-    return str(val).strip()
-
-
-def _limpiar_str_lower(val: Any) -> str | None:
-    if pd.isna(val) or val is None:
-        return None
-    s = str(val).strip()
-    return s.lower() if s else None
-
-
-def _normalizar_nombre_columna(name: str) -> str:
-    n = str(name).strip().lower()
-    n = re.sub(r"\s+", "_", n)
-    return n
-
-
-def importar_desde_excel(db: Session, archivo: UploadFile) -> dict[str, Any]:
-    """
-    Importa filas desde Excel: busca o crea catálogos e inserta contactos.
-
-    Columnas esperadas: nombre, apellidos, telefono, provincia, municipio,
-    partido, cargo, tipo, afinidad, influencia, relacion (texto → catálogo relaciones),
-    moviliza, ultimo_contacto, proximo_contacto, responsable, prioridad, notas, periodo.
-    """
-    if not archivo.filename or not archivo.filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Solo se admiten archivos .xlsx (openpyxl)")
-
-    raw = archivo.file.read()
-    try:
-        df = pd.read_excel(io.BytesIO(raw))
-    except Exception as exc:  # noqa: BLE001
-        log.exception("Fallo leyendo Excel")
-        raise HTTPException(status_code=400, detail=f"No se pudo leer el Excel: {exc}") from exc
-
-    if df.empty:
-        return {"insertados": 0, "errores": ["Archivo sin filas de datos"]}
-
-    df.columns = [_normalizar_nombre_columna(c) for c in df.columns]
-
-    alias = {
-        "nombres": "nombre",
-        "apellido": "apellidos",
-        "tel": "telefono",
-        "telefono_movil": "telefono",
-        "rol": "tipo",
-        "tipo_contacto": "tipo",
-        "tipo_figura": "tipo",
-    }
-    df.rename(columns={k: v for k, v in alias.items() if k in df.columns}, inplace=True)
-
-    requeridas = {
-        "nombre",
-        "apellidos",
-        "provincia",
-        "municipio",
-        "partido",
-        "cargo",
-        "tipo",
-        "periodo",
-    }
-    faltan = requeridas - set(df.columns)
-    if faltan:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Faltan columnas obligatorias en el Excel: {sorted(faltan)}",
-        )
-
-    insertados = 0
-    errores: list[str] = []
-
-    for idx, row in df.iterrows():
-        fila = int(idx) + 2
-        try:
-            nombre = _limpiar_nombre_persona(row.get("nombre"))
-            apellidos = _limpiar_nombre_persona(row.get("apellidos"))
-            if not nombre or not apellidos:
-                errores.append(f"Fila {fila}: nombre o apellidos vacíos")
-                continue
-
-            provincia_nombre = _limpiar_str(row.get("provincia"))
-            municipio_nombre = _limpiar_str(row.get("municipio"))
-            if not provincia_nombre or not municipio_nombre:
-                errores.append(f"Fila {fila}: provincia o municipio vacíos")
-                continue
-
-            partido_nombre = _limpiar_str(row.get("partido"))
-            cargo_nombre = _limpiar_str(row.get("cargo"))
-            tipo_nombre = _limpiar_str(row.get("tipo"))
-            if not partido_nombre or not cargo_nombre or not tipo_nombre:
-                errores.append(f"Fila {fila}: partido, cargo o tipo vacíos")
-                continue
-
-            provincia = catalogo_service.obtener_o_crear_provincia(db, provincia_nombre)
-            municipio = catalogo_service.obtener_o_crear_municipio(db, municipio_nombre, provincia)
-            partido = catalogo_service.obtener_o_crear_partido(db, partido_nombre)
-            cargo = catalogo_service.obtener_o_crear_cargo(db, cargo_nombre)
-            tipo = catalogo_service.obtener_o_crear_tipo(db, tipo_nombre)
-
-            telefono = _limpiar_str(row.get("telefono"))
-            afinidad = _limpiar_str_lower(row.get("afinidad")) or "neutro"
-            influencia = _limpiar_str_lower(row.get("influencia")) or "medio"
-            relacion_raw = row.get("relacion")
-            if pd.isna(relacion_raw) or str(relacion_raw).strip() == "":
-                relacion_txt = "sin_contacto"
-            else:
-                relacion_txt = str(relacion_raw).strip()
-            rel = relacion_service.obtener_o_crear_relacion(db, relacion_txt)
-
-            moviliza = _parse_bool_moviliza(row.get("moviliza"))
-            ultimo = _parse_fecha(row.get("ultimo_contacto"))
-            proximo = _parse_fecha(row.get("proximo_contacto"))
-            responsable_raw = row.get("responsable")
-            responsable = None if pd.isna(responsable_raw) else str(responsable_raw).strip() or None
-            prioridad = _limpiar_str_lower(row.get("prioridad")) or "media"
-            notas_raw = row.get("notas")
-            notas = None if pd.isna(notas_raw) else str(notas_raw).strip() or None
-            periodo = _celda_periodo(row.get("periodo"))
-            if not periodo:
-                errores.append(f"Fila {fila}: periodo vacío")
-                continue
-
-            c = Contacto(
-                nombre=nombre,
-                apellidos=apellidos,
-                telefono=telefono,
-                municipio_id=municipio.id,
-                provincia_id=provincia.id,
-                cargo_id=cargo.id,
-                partido_id=partido.id,
-                tipo_id=tipo.id,
-                relacion_id=rel.id,
-                afinidad=afinidad,
-                influencia=influencia,
-                moviliza=moviliza,
-                ultimo_contacto=ultimo,
-                proximo_contacto=proximo,
-                responsable=responsable,
-                prioridad=prioridad,
-                notas=notas,
-                periodo=periodo,
-            )
-            db.add(c)
-            insertados += 1
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Error importando fila %s: %s", fila, exc)
-            errores.append(f"Fila {fila}: {exc}")
-
-    log.info("Importación Excel insertados=%s errores=%s", insertados, len(errores))
-    return {"insertados": insertados, "errores": errores}
