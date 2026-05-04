@@ -14,7 +14,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.database import init_db
 from app.models import Municipio, Provincia
 from app.services.catalogo_service import normalizar_nombre_catalogo
 
@@ -175,15 +174,11 @@ def seed_boyaca(db: Session) -> dict[str, Any]:
     """
     Inserta provincias (claves de ``BOYACA_DATA``) y municipios asociados si no existen.
 
-    Crea antes el esquema con ``init_db()`` si la base aún no tiene tablas (p. ej. PostgreSQL nuevo
-    en Render sin haber ejecutado migraciones manualmente).
+    El esquema debe existir ya (p. ej. ``get_db_seed_boyaca`` llama a ``init_db()`` antes de abrir
+    la sesión).
 
-    Cuenta solo filas nuevas creadas en esta ejecución. La sesión debe gestionar commit/rollback
-    (p. ej. dependencia ``get_db``).
+    Cuenta solo filas nuevas creadas en esta ejecución.
     """
-    init_db()
-    db.expire_all()
-
     provincias_creadas = 0
     municipios_creados = 0
 

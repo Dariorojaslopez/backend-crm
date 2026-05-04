@@ -70,9 +70,32 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def get_db_seed_boyaca() -> Generator[Session, None, None]:
+    """
+    Igual que ``get_db``, pero ejecuta ``init_db()`` **antes** de abrir la sesión.
+
+    Así el DDL queda confirmado y la conexión del ORM no queda abierta antes de existir
+    ``provincias`` / ``municipios`` (evita ``UndefinedTable`` en PostgreSQL).
+    """
+    init_db()
+    factory = get_session_factory()
+    db = factory()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def init_db() -> None:
     """
     Crea todas las tablas según los modelos importados (equivalente a DDL inicial).
+
+    Usa una transacción explícita en el motor para que el COMMIT deje visible el esquema
+    a conexiones posteriores del pool.
 
     Invocar una vez por entorno o sustituir por Alembic en producción madura.
     """
@@ -81,7 +104,8 @@ def init_db() -> None:
     from app.models.base import Base
 
     eng = get_engine()
-    Base.metadata.create_all(bind=eng)
+    with eng.begin() as conn:
+        Base.metadata.create_all(bind=conn)
 
 
 def get_db_connection() -> tuple[bool, str]:
